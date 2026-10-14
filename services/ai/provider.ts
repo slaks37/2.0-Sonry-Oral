@@ -1,15 +1,21 @@
 import { ImageQualityResponse, OralAnalysisResponse, ClinicalReportResponse } from './schemas';
+import { ToothViewType } from '../../types';
 
 export interface AIProvider {
   readonly providerName: string;
 
-  checkImageQuality(imageBase64: string, mimeType?: string): Promise<ImageQualityResponse>;
+  checkImageQuality(
+    imageBase64: string,
+    mimeType?: string,
+    viewType?: ToothViewType
+  ): Promise<ImageQualityResponse>;
 
   analyzeOralImage(
     imageBase64: string,
     ageInYears: number,
     mimeType?: string,
-    knowledgeBase?: string
+    knowledgeBase?: string,
+    viewType?: ToothViewType
   ): Promise<OralAnalysisResponse>;
 
   generateClinicalReport(params: {

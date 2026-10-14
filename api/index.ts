@@ -229,18 +229,65 @@ app.post('/api/v1/auth/logout', authenticateToken, async (req: AuthenticatedRequ
 // AI SCREENING ENDPOINTS (AGNES AI)
 // ===================================================================================
 
+// Rate Limiter: Max 60 requests per minute per user/IP
+const aiRateLimitMap = new Map<string, { count: number; resetAt: number }>();
+const aiRateLimiter = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const identifier = (req as any).user?.userId || req.ip || 'anonymous';
+  const now = Date.now();
+  const record = aiRateLimitMap.get(identifier);
+
+  if (!record || now > record.resetAt) {
+    aiRateLimitMap.set(identifier, { count: 1, resetAt: now + 60000 });
+    return next();
+  }
+
+  if (record.count >= 60) {
+    return res.status(429).json({
+      error: 'Batas frekuensi permintaan AI terlampaui (maksimal 60 request/menit). Harap tunggu sejenak.',
+    });
+  }
+
+  record.count++;
+  next();
+};
+
+const validateImagePayload = (imageBase64?: string): void => {
+  if (!imageBase64 || typeof imageBase64 !== 'string') {
+    throw new Error('Data foto diperlukan dan harus berupa string base64.');
+  }
+  // Max 20MB base64 string (~15MB raw image)
+  if (imageBase64.length > 20 * 1024 * 1024) {
+    throw new Error('Ukuran foto melebihi batas aman transmisi (maksimal 15MB).');
+  }
+};
+
 const handleCheckQuality = async (req: express.Request, res: express.Response) => {
   try {
-    const { imageBase64, mimeType } = req.body;
-    if (!imageBase64) {
-      return res.status(400).json({ error: 'Data foto diperlukan.' });
-    }
+    const { imageBase64, mimeType, viewType } = req.body;
+    validateImagePayload(imageBase64);
 
-    const result = await agnesAI.checkImageQuality(imageBase64, mimeType || 'image/jpeg');
+    const result = await agnesAI.checkImageQuality(
+      imageBase64,
+      mimeType || 'image/jpeg',
+      viewType || 'FRONT_VIEW'
+    );
     return res.json(result);
   } catch (err: any) {
-    console.error('Error in check-quality:', err);
-    return res.status(500).json({
+    console.error('Error in check-quality:', err?.message || 'Unknown error');
+    return res.status(err?.statusCode || 500).json({
+      state: 'UNASSESSABLE',
+      isOralCavity: false,
+      teethVisible: false,
+      viewType: req.body?.viewType || 'FRONT_VIEW',
+      qualityFactors: {
+        blur: false,
+        glare: false,
+        darkness: false,
+        obstruction: false,
+        poorFraming: false,
+        nonOralImage: false,
+        teethInvisible: false,
+      },
       quality: 'unable_to_assess',
       reason: err?.message || 'Gagal memeriksa kualitas gambar.',
       error: err?.message,
@@ -250,20 +297,23 @@ const handleCheckQuality = async (req: express.Request, res: express.Response) =
 
 const handleAnalyzeOral = async (req: express.Request, res: express.Response) => {
   try {
-    const { imageBase64, mimeType, ageInYears, knowledgeBase } = req.body;
-    if (!imageBase64) {
-      return res.status(400).json({ error: 'Data foto diperlukan.' });
-    }
+    const { imageBase64, mimeType, ageInYears, viewType } = req.body;
+    validateImagePayload(imageBase64);
+
+    // SECURITY: Use server-owned authoritative knowledge base rather than trusting client overrides
+    const { getKnowledgeBasePrompt } = await import('../data/knowledgeBase');
+    const serverKnowledgeBase = getKnowledgeBasePrompt();
 
     const result = await agnesAI.analyzeOralImage(
       imageBase64,
       Number(ageInYears) || 0,
       mimeType || 'image/jpeg',
-      knowledgeBase
+      serverKnowledgeBase,
+      viewType || 'FRONT_VIEW'
     );
     return res.json(result);
   } catch (err: any) {
-    console.error('Error in analyze-oral:', err);
+    console.error('Error in analyze-oral:', err?.message || 'Unknown error');
     const statusCode = err?.statusCode || 500;
     return res.status(statusCode).json({
       error: err?.message || 'Gagal menganalisis gambar gigi dan mulut. Silakan coba kembali.',
@@ -289,7 +339,7 @@ const handleFinalReport = async (req: express.Request, res: express.Response) =>
       ...reportNarrative,
     });
   } catch (err: any) {
-    console.error('Error in final-report:', err);
+    console.error('Error in final-report:', err?.message || 'Unknown error');
     const statusCode = err?.statusCode || 500;
     return res.status(statusCode).json({
       error: err?.message || 'Gagal menyusun laporan terpadu. Silakan coba kembali.',
@@ -297,15 +347,15 @@ const handleFinalReport = async (req: express.Request, res: express.Response) =>
   }
 };
 
-// Modern Provider-Neutral AI routes
-app.post('/api/ai/check-quality', handleCheckQuality);
-app.post('/api/ai/analyze-oral', handleAnalyzeOral);
-app.post('/api/ai/final-report', handleFinalReport);
+// Modern Provider-Neutral AI routes (Authenticated & Rate Limited)
+app.post('/api/ai/check-quality', authenticateToken, aiRateLimiter, handleCheckQuality);
+app.post('/api/ai/analyze-oral', authenticateToken, aiRateLimiter, handleAnalyzeOral);
+app.post('/api/ai/final-report', authenticateToken, aiRateLimiter, handleFinalReport);
 
 // Backward-compatible Gemini route aliases
-app.post('/api/gemini/check-quality', handleCheckQuality);
-app.post('/api/gemini/analyze-oral', handleAnalyzeOral);
-app.post('/api/gemini/final-report', handleFinalReport);
+app.post('/api/gemini/check-quality', authenticateToken, aiRateLimiter, handleCheckQuality);
+app.post('/api/gemini/analyze-oral', authenticateToken, aiRateLimiter, handleAnalyzeOral);
+app.post('/api/gemini/final-report', authenticateToken, aiRateLimiter, handleFinalReport);
 
 // ===================================================================================
 // SCREENING RECORDS (TENANT ISOLATED & DURABLE POSTGRESQL)

@@ -16,16 +16,19 @@ describe('Agnes AI Provider & Schema Normalization Tests', () => {
     });
 
     it('clamps negative or exceeding coordinates to stay within boundaries', () => {
-      const box = normalizeBoundingBox({ x: -10, y: 120, width: 150, height: -20 });
-      expect(box.x).toBe(0);
-      expect(box.y).toBe(100);
-      expect(box.width).toBe(100);
-      expect(box.height).toBe(0);
+      const box = normalizeBoundingBox({ x: -10, y: 50, width: 150, height: 40 });
+      expect(box).not.toBeNull();
+      expect(box!.x).toBe(0);
+      expect(box!.y).toBe(50);
+      expect(box!.width).toBe(100);
+      expect(box!.height).toBe(40);
     });
 
-    it('handles undefined or null properties safely without throwing', () => {
-      const box = normalizeBoundingBox(null);
-      expect(box).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+    it('permits boundingBox null when missing or invalid (Directive 5)', () => {
+      expect(normalizeBoundingBox(null)).toBeNull();
+      expect(normalizeBoundingBox(undefined)).toBeNull();
+      expect(normalizeBoundingBox({ x: 0, y: 0, width: 0, height: 0 })).toBeNull();
+      expect(normalizeBoundingBox({ x: 'invalid', y: 10, width: 20, height: 20 })).toBeNull();
     });
   });
 
@@ -66,6 +69,7 @@ describe('Agnes AI Provider & Schema Normalization Tests', () => {
       const res = await provider.checkImageQuality('dummyBase64');
       expect(res.quality).toBe('unable_to_assess');
       expect(res.quality).not.toBe('good');
+      expect(res.state).toBe('UNASSESSABLE');
     });
   });
 });

@@ -2,12 +2,24 @@
  * Frontend AI Service (calls backend /api/ai endpoints powered by Agnes AI)
  */
 
-import type { OralAnalysisResult, HealthReportData, PatientData, StuntingScreeningData } from '../types';
-import { getKnowledgeBasePrompt } from '../data/knowledgeBase';
+import type {
+  OralAnalysisResult,
+  HealthReportData,
+  PatientData,
+  StuntingScreeningData,
+  ToothViewType,
+  ImageAssessability,
+  QualityFactors,
+} from '../types';
 
 export interface QualityCheckResult {
+  state: ImageAssessability;
+  isOralCavity: boolean;
+  teethVisible: boolean;
+  viewType: ToothViewType;
   quality: 'good' | 'poor' | 'unable_to_assess';
   reason: string;
+  qualityFactors?: QualityFactors;
 }
 
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
@@ -55,7 +67,10 @@ const getAuthHeaders = (): Record<string, string> => {
  * Evaluates image quality before performing full analysis.
  * NEVER returns 'good' on error or service failure!
  */
-export const checkImageQuality = async (imageFile: File): Promise<QualityCheckResult> => {
+export const checkImageQuality = async (
+  imageFile: File,
+  viewType: ToothViewType = 'FRONT_VIEW'
+): Promise<QualityCheckResult> => {
   try {
     validateImageFile(imageFile);
     const imageBase64 = await fileToBase64(imageFile);
@@ -66,12 +81,17 @@ export const checkImageQuality = async (imageFile: File): Promise<QualityCheckRe
       body: JSON.stringify({
         imageBase64,
         mimeType: imageFile.type || 'image/jpeg',
+        viewType,
       }),
     });
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
       return {
+        state: 'UNASSESSABLE',
+        isOralCavity: false,
+        teethVisible: false,
+        viewType,
         quality: 'unable_to_assess',
         reason: errorData.reason || errorData.error || 'Pemeriksaan kualitas gambar dari server tidak dapat diselesaikan.',
       };
@@ -79,14 +99,23 @@ export const checkImageQuality = async (imageFile: File): Promise<QualityCheckRe
 
     const data = await response.json();
     return {
+      state: data.state || (data.quality === 'good' ? 'ASSESSABLE' : 'UNASSESSABLE'),
+      isOralCavity: data.isOralCavity ?? true,
+      teethVisible: data.teethVisible ?? true,
+      viewType: data.viewType || viewType,
       quality: data.quality || 'unable_to_assess',
       reason: data.reason || 'Kualitas gambar dievaluasi.',
+      qualityFactors: data.qualityFactors,
     };
   } catch (error: any) {
     console.warn('Failed to check image quality:', error);
     return {
+      state: 'UNASSESSABLE',
+      isOralCavity: false,
+      teethVisible: false,
+      viewType,
       quality: 'unable_to_assess',
-      reason: error?.message || 'Gagal mengevaluasi kualitas foto. Pastikan koneksi stabil.',
+      reason: error?.message || 'Gagal mengevaluasi kualitas foto. Pastikan koneksi stabil dan sesi aktif.',
     };
   }
 };
@@ -96,11 +125,11 @@ export const checkImageQuality = async (imageFile: File): Promise<QualityCheckRe
  */
 export const analyzeOralImageWithBoundingBox = async (
   imageFile: File,
-  ageInYears: number
+  ageInYears: number,
+  viewType: ToothViewType = 'FRONT_VIEW'
 ): Promise<OralAnalysisResult> => {
   validateImageFile(imageFile);
   const imageBase64 = await fileToBase64(imageFile);
-  const knowledgeBase = getKnowledgeBasePrompt();
 
   const response = await fetch('/api/ai/analyze-oral', {
     method: 'POST',
@@ -109,7 +138,7 @@ export const analyzeOralImageWithBoundingBox = async (
       imageBase64,
       mimeType: imageFile.type || 'image/jpeg',
       ageInYears,
-      knowledgeBase,
+      viewType,
     }),
   });
 
@@ -129,7 +158,7 @@ export const analyzeOralImageWithBoundingBox = async (
 export const generateFinalReport = async (
   patientData: PatientData,
   stuntingData: StuntingScreeningData,
-  oralResults: { diseaseName: string }[][],
+  oralResults: any[],
   metrics: Partial<HealthReportData>,
   language: 'en' | 'id'
 ): Promise<HealthReportData> => {
