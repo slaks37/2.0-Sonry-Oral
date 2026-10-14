@@ -2,6 +2,46 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="description" content="An AI-powered application to detect early signs of stunting risk through oral health analysis. Designed for health workers, it provides rapid, visual feedback on a child's dental health to enable early intervention." />
+    <script>
+      (function() {
+        try {
+          var originalFetch = window.fetch;
+          var _fetch = originalFetch ? originalFetch.bind(window) : undefined;
+          
+          Object.defineProperty(window, 'fetch', {
+            get: function() {
+              return _fetch;
+            },
+            set: function(fn) {
+              _fetch = fn;
+            },
+            configurable: true,
+            enumerable: true,
+          });
+
+          if (typeof Window !== 'undefined' && Window.prototype) {
+            try {
+              var protoDesc = Object.getOwnPropertyDescriptor(Window.prototype, 'fetch');
+              if (protoDesc && (!protoDesc.set || protoDesc.configurable)) {
+                Object.defineProperty(Window.prototype, 'fetch', {
+                  get: function() {
+                    return _fetch;
+                  },
+                  set: function(fn) {
+                    _fetch = fn;
+                  },
+                  configurable: true,
+                  enumerable: true,
+                });
+              }
+            } catch (_) {}
+          }
+        } catch (e) {
+          console.warn('Could not define window.fetch setter:', e);
+        }
+      })();
+    </script>
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light">
