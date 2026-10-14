@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { AppStep } from './types';
-import type { PatientData, StuntingScreeningData, OralAnalysis, HealthReportData, ScreeningRecord, GrowthStatus } from './types';
+import type { PatientData, StuntingScreeningData, OralAnalysis, HealthReportData, ScreeningRecord, GrowthStatus, ToothViewType } from './types';
 import Header from './components/Header';
 import StuntingScreening from './components/CameraInput';
 import OralExamination from './components/OralExamination';
@@ -229,48 +229,84 @@ const App: React.FC = () => {
     setStep(AppStep.ORAL_EXAMINATION);
   };
   
-  const handleImagesSelect = useCallback((files: File[]) => {
-    const newAnalyses: OralAnalysis[] = files.map(file => ({
+  const handleImagesSelect = useCallback((items: (File | { file: File; viewType?: ToothViewType })[]) => {
+    const newAnalyses: OralAnalysis[] = items.map(item => {
+      const file = item instanceof File ? item : item.file;
+      const viewType = item instanceof File ? 'FRONT_VIEW' : (item.viewType || 'FRONT_VIEW');
+      return {
         imageFile: file,
         imagePreview: URL.createObjectURL(file),
+        viewType,
         analysisResult: null,
         imageQuality: 'checking',
-    }));
+      };
+    });
     
     setOralAnalyses(prev => [...prev, ...newAnalyses]);
     setError(null);
 
     newAnalyses.forEach(async (analysis) => {
-        if (!analysis.imageFile) return;
-        try {
-            const qualityResult = await checkImageQuality(analysis.imageFile);
-            setOralAnalyses(prev => {
-                const indexToUpdate = prev.findIndex(a => a.imagePreview === analysis.imagePreview);
-                if (indexToUpdate === -1) return prev;
-                
-                const updated = [...prev];
-                updated[indexToUpdate] = {
-                    ...updated[indexToUpdate],
-                    imageQuality: qualityResult.quality,
-                    qualityReason: qualityResult.reason,
-                };
-                return updated;
-            });
-        } catch (error: any) {
-            console.error("Failed to check image quality:", error);
-            // FIX: Never default to 'good' on quality check failure!
-            setOralAnalyses(prev => {
-                const indexToUpdate = prev.findIndex(a => a.imagePreview === analysis.imagePreview);
-                if (indexToUpdate === -1) return prev;
-                const updated = [...prev];
-                updated[indexToUpdate] = {
-                    ...updated[indexToUpdate],
-                    imageQuality: 'unable_to_assess',
-                    qualityReason: error?.message || 'Layanan evaluasi kualitas tidak dapat dihubungi.',
-                };
-                return updated;
-            });
-        }
+      if (!analysis.imageFile) return;
+      try {
+        const qualityResult = await checkImageQuality(analysis.imageFile, analysis.viewType || 'FRONT_VIEW');
+        setOralAnalyses(prev => {
+          const indexToUpdate = prev.findIndex(a => a.imagePreview === analysis.imagePreview);
+          if (indexToUpdate === -1) return prev;
+          
+          const updated = [...prev];
+          updated[indexToUpdate] = {
+            ...updated[indexToUpdate],
+            imageQuality: qualityResult.quality,
+            qualityReason: qualityResult.reason,
+            imageAssessment: {
+              state: qualityResult.state,
+              isOralCavity: qualityResult.isOralCavity,
+              teethVisible: qualityResult.teethVisible,
+              viewType: qualityResult.viewType,
+              qualityFactors: qualityResult.qualityFactors || {
+                blur: false,
+                glare: false,
+                darkness: false,
+                obstruction: false,
+                poorFraming: false,
+                nonOralImage: false,
+                teethInvisible: false,
+              },
+              reason: qualityResult.reason,
+            },
+          };
+          return updated;
+        });
+      } catch (error: any) {
+        console.error("Failed to check image quality:", error);
+        setOralAnalyses(prev => {
+          const indexToUpdate = prev.findIndex(a => a.imagePreview === analysis.imagePreview);
+          if (indexToUpdate === -1) return prev;
+          const updated = [...prev];
+          updated[indexToUpdate] = {
+            ...updated[indexToUpdate],
+            imageQuality: 'unable_to_assess',
+            qualityReason: error?.message || 'Layanan evaluasi kualitas tidak dapat dihubungi.',
+            imageAssessment: {
+              state: 'UNASSESSABLE',
+              isOralCavity: false,
+              teethVisible: false,
+              viewType: analysis.viewType || 'FRONT_VIEW',
+              qualityFactors: {
+                blur: false,
+                glare: false,
+                darkness: false,
+                obstruction: false,
+                poorFraming: false,
+                nonOralImage: false,
+                teethInvisible: false,
+              },
+              reason: error?.message || 'Gagal memeriksa kualitas gambar.',
+            },
+          };
+          return updated;
+        });
+      }
     });
   }, []);
 
@@ -289,13 +325,17 @@ const App: React.FC = () => {
       setError(t('selectImageError'));
       return;
     }
-    if (oralAnalyses.some(a => a.imageQuality === 'poor')) {
-      setError("Foto dengan peringatan kualitas buruk harus diganti atau dihapus sebelum analisis dapat dijalankan.");
+    // GATING REQUIREMENT: Block both 'poor' and 'unable_to_assess' or UNASSESSABLE!
+    const unassessablePhotos = oralAnalyses.filter(
+      a => a.imageQuality === 'poor' || a.imageQuality === 'unable_to_assess' || a.imageAssessment?.state === 'UNASSESSABLE'
+    );
+    if (unassessablePhotos.length > 0) {
+      setError("Terdapat foto dengan status kualitas buruk atau tidak dapat dinilai secara klinis. Harap ganti atau hapus foto tersebut sebelum analisis dapat diproses.");
       return;
     }
     if (!patientData.dob || !patientData.height || !patientData.gender || !patientData.weight || !patientData.nik) {
-        setError(t('patientDataMissingError'));
-        return;
+      setError(t('patientDataMissingError'));
+      return;
     }
 
     setIsLoading(true);
@@ -342,7 +382,11 @@ const App: React.FC = () => {
       }
 
       const analysisPromises = oralAnalyses.map(analysis => 
-        analyzeOralImageWithBoundingBox(analysis.imageFile!, ageInYears)
+        analyzeOralImageWithBoundingBox(
+          analysis.imageFile!,
+          ageInYears,
+          analysis.viewType || 'FRONT_VIEW'
+        )
       );
       const results = await Promise.all(analysisPromises);
       
@@ -352,8 +396,8 @@ const App: React.FC = () => {
       }));
       setOralAnalyses(updatedAnalyses);
 
-      const simplifiedOralResults = results.map(res => res.issues.map(issue => ({ diseaseName: issue.diseaseName })));
-      const finalReport = await generateFinalReport(patientData, stuntingData, simplifiedOralResults, metrics, language);
+      // Pass full staged oral results to clinical report synthesis
+      const finalReport = await generateFinalReport(patientData, stuntingData, results, metrics, language);
       
       setHealthReport(finalReport);
       setStep(AppStep.REPORT);
@@ -374,6 +418,7 @@ const App: React.FC = () => {
       const oralAnalysesForStorage = await Promise.all(
           oralAnalyses.map(async (analysis) => ({
               imageBase64: await fileToBase64(analysis.imageFile!),
+              viewType: analysis.viewType || 'FRONT_VIEW',
               analysisResult: analysis.analysisResult!,
           }))
       );

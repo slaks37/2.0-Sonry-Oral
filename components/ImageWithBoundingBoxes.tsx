@@ -14,10 +14,10 @@ const ImageWithBoundingBoxes: React.FC<ImageWithBoundingBoxesProps> = ({
   issues,
   renderBoundingBoxContent,
   imageClassName = "object-contain w-full h-full",
-  containerClassName = "relative w-full h-full flex justify-center items-center overflow-hidden", // Added flex centering and overflow hidden
+  containerClassName = "relative w-full h-full flex justify-center items-center overflow-hidden",
 }) => {
   const imgRef = useRef<HTMLImageElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null); // Reference to the parent container
+  const containerRef = useRef<HTMLDivElement>(null);
   const [imageMetrics, setImageMetrics] = useState<{
     renderedWidth: number;
     renderedHeight: number;
@@ -39,6 +39,11 @@ const ImageWithBoundingBoxes: React.FC<ImageWithBoundingBoxesProps> = ({
     const containerWidth = container.offsetWidth;
     const containerHeight = container.offsetHeight;
 
+    if (containerWidth <= 0 || containerHeight <= 0) {
+      setImageMetrics(null);
+      return;
+    }
+
     const imgAspectRatio = naturalWidth / naturalHeight;
     const containerAspectRatio = containerWidth / containerHeight;
 
@@ -48,20 +53,19 @@ const ImageWithBoundingBoxes: React.FC<ImageWithBoundingBoxesProps> = ({
     let offsetY = 0;
 
     if (imgAspectRatio > containerAspectRatio) {
-      // Image is wider than container: width is constrained by container width
+      // Image is wider than container
       renderedWidth = containerWidth;
       renderedHeight = containerWidth / imgAspectRatio;
       offsetX = 0;
       offsetY = (containerHeight - renderedHeight) / 2;
     } else {
-      // Image is taller than container: height is constrained by container height
+      // Image is taller than container
       renderedHeight = containerHeight;
       renderedWidth = containerHeight * imgAspectRatio;
       offsetX = (containerWidth - renderedWidth) / 2;
       offsetY = 0;
     }
     
-    // Ensure rendered dimensions are positive
     renderedWidth = Math.max(0, renderedWidth);
     renderedHeight = Math.max(0, renderedHeight);
 
@@ -78,28 +82,25 @@ const ImageWithBoundingBoxes: React.FC<ImageWithBoundingBoxesProps> = ({
     const container = containerRef.current;
 
     if (img && container) {
-      // Define handleLoad inside useEffect to keep it in scope for cleanup
       const handleLoad = () => {
         calculateImageMetrics();
       };
 
       img.addEventListener('load', handleLoad);
-      window.addEventListener('resize', calculateImageMetrics); // Recalculate on window resize
+      window.addEventListener('resize', calculateImageMetrics);
       
-      // Initial calculation if image is already loaded
       if (img.complete) {
         calculateImageMetrics();
       }
       
       return () => {
-        // Cleanup function now has access to handleLoad
         if (img) {
           img.removeEventListener('load', handleLoad);
         }
         window.removeEventListener('resize', calculateImageMetrics);
       };
     }
-  }, [imageSrc, calculateImageMetrics]); // Depend on imageSrc and calculateImageMetrics
+  }, [imageSrc, calculateImageMetrics]);
 
   return (
     <div ref={containerRef} className={containerClassName}>
@@ -108,17 +109,36 @@ const ImageWithBoundingBoxes: React.FC<ImageWithBoundingBoxesProps> = ({
         src={imageSrc}
         alt="Visual Evidence"
         className={imageClassName}
-        // Removed onLoad here as it's added via addEventListener in useEffect
       />
       {imageMetrics && issues.map((issue, issueIndex) => {
         const { boundingBox } = issue;
+        
+        // Safeguard: Do not render boxes if boundingBox is null or has zero area
+        if (!boundingBox || typeof boundingBox.x !== 'number' || typeof boundingBox.y !== 'number' || !boundingBox.width || !boundingBox.height) {
+          return null;
+        }
+
+        if (boundingBox.width <= 0 || boundingBox.height <= 0) {
+          return null;
+        }
+
         const { renderedWidth, renderedHeight, offsetX, offsetY } = imageMetrics;
 
+        // Clamp coordinates within [0, 100]
+        const clampedX = Math.max(0, Math.min(100, boundingBox.x));
+        const clampedY = Math.max(0, Math.min(100, boundingBox.y));
+        const clampedWidth = Math.max(0, Math.min(100 - clampedX, boundingBox.width));
+        const clampedHeight = Math.max(0, Math.min(100 - clampedY, boundingBox.height));
+
+        if (clampedWidth <= 0.1 || clampedHeight <= 0.1) {
+          return null;
+        }
+
         // Calculate final pixel positions for the bounding box
-        const finalLeft = offsetX + (boundingBox.x / 100) * renderedWidth;
-        const finalTop = offsetY + (boundingBox.y / 100) * renderedHeight;
-        const finalWidth = (boundingBox.width / 100) * renderedWidth;
-        const finalHeight = (boundingBox.height / 100) * renderedHeight;
+        const finalLeft = offsetX + (clampedX / 100) * renderedWidth;
+        const finalTop = offsetY + (clampedY / 100) * renderedHeight;
+        const finalWidth = (clampedWidth / 100) * renderedWidth;
+        const finalHeight = (clampedHeight / 100) * renderedHeight;
 
         return (
           <div
@@ -129,7 +149,7 @@ const ImageWithBoundingBoxes: React.FC<ImageWithBoundingBoxesProps> = ({
               top: `${finalTop}px`,
               width: `${finalWidth}px`,
               height: `${finalHeight}px`,
-              pointerEvents: 'none', // Allow clicks to pass through to elements behind
+              pointerEvents: 'none',
             }}
           >
             {renderBoundingBoxContent(issue, issueIndex)}
