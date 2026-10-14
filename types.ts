@@ -80,7 +80,7 @@ export interface OralAnalysis {
   imageFile?: File;
   imagePreview: string;
   analysisResult: OralAnalysisResult | null;
-  imageQuality?: 'good' | 'poor' | 'checking';
+  imageQuality?: 'good' | 'poor' | 'checking' | 'unable_to_assess';
   qualityReason?: string;
 }
 

@@ -160,7 +160,17 @@ const CameraView: React.FC<CameraViewProps> = ({ onConfirm, onClose }) => {
   }, []);
 
   const handleDone = () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+    }
     onConfirm(capturedImages);
+  };
+
+  const handleClose = () => {
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+    }
+    onClose();
   };
 
   const handleRemoveImage = (indexToRemove: number) => {
@@ -173,7 +183,7 @@ const CameraView: React.FC<CameraViewProps> = ({ onConfirm, onClose }) => {
   return (
     <div className="fixed inset-0 bg-black z-50 flex flex-col items-center justify-center p-4">
       {isLoading && <LoadingSpinner />}
-      {error && <div className="text-white text-center"><p className="mb-4">{error}</p><button onClick={onClose} className="bg-red-500 text-white font-bold py-2 px-4 rounded">{t('close')}</button></div>}
+      {error && <div className="text-white text-center"><p className="mb-4">{error}</p><button onClick={handleClose} className="bg-red-500 text-white font-bold py-2 px-4 rounded">{t('close')}</button></div>}
 
       <div className={`relative w-full h-full flex items-center justify-center ${isLoading || error ? 'hidden' : ''}`}>
         <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-contain"></video>
@@ -251,7 +261,7 @@ const CameraView: React.FC<CameraViewProps> = ({ onConfirm, onClose }) => {
         )}
 
         <div className="absolute bottom-0 left-0 right-0 p-4 bg-black bg-opacity-50 flex justify-center items-center space-x-6 sm:space-x-8">
-            <button onClick={onClose} className="text-white text-sm font-medium p-2 w-14 sm:w-16 text-center">{t('cancel')}</button>
+            <button onClick={handleClose} className="text-white text-sm font-medium p-2 w-14 sm:w-16 text-center">{t('cancel')}</button>
             <button
               onClick={handleCapture}
               className="w-14 h-14 sm:w-16 sm:h-16 bg-white rounded-full border-4 border-gray-300 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-white"
