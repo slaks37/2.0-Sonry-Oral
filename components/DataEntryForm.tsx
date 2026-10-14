@@ -110,12 +110,14 @@ const HealthReport: React.FC<HealthReportProps> = ({ report, patient, oralAnalys
     document.body.appendChild(pdfContainer);
 
     try {
+        const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+        const scale = isMobile ? 1.5 : 2.0;
+
         // Render the off-screen container using html2canvas
         const canvas = await html2canvas(pdfContainer, {
-            scale: 2.5, // Increase scale for better quality/resolution
+            scale,
             useCORS: true,
             backgroundColor: '#ffffff',
-            // Ensure the canvas captures the entire content of the temporary container
             windowHeight: pdfContainer.scrollHeight,
             scrollY: 0,
         });
@@ -138,8 +140,8 @@ const HealthReport: React.FC<HealthReportProps> = ({ report, patient, oralAnalys
         heightLeft -= pdfHeight;
 
         // Add more pages if the content is taller than one page
-        while (heightLeft > 0.1) { // Use a small threshold to avoid empty last page
-            position -= pdfHeight; // Move the image "up" on the new page
+        while (heightLeft > 0.1) {
+            position -= pdfHeight;
             pdf.addPage();
             pdf.addImage(imgData, 'PNG', 0, position, pdfWidth, scaledCanvasHeight);
             heightLeft -= pdfHeight;
@@ -149,10 +151,11 @@ const HealthReport: React.FC<HealthReportProps> = ({ report, patient, oralAnalys
 
     } catch (error) {
         console.error("PDF generation failed:", error);
-        throw new Error("Could not generate PDF. Please try again.");
+        throw new Error("Gagal menyusun dokumen PDF. Silakan coba kembali.");
     } finally {
-        // Clean up by removing the temporary container from the DOM
-        document.body.removeChild(pdfContainer);
+        if (pdfContainer.parentNode) {
+            pdfContainer.parentNode.removeChild(pdfContainer);
+        }
     }
   };
 
@@ -169,7 +172,7 @@ const HealthReport: React.FC<HealthReportProps> = ({ report, patient, oralAnalys
         URL.revokeObjectURL(url);
     } catch (error) {
         console.error("Failed to export PDF:", error);
-        alert("Could not export PDF.");
+        alert("Gagal mengunduh PDF. Silakan coba kembali.");
     }
   };
 
@@ -181,17 +184,16 @@ const HealthReport: React.FC<HealthReportProps> = ({ report, patient, oralAnalys
           if (navigator.share && navigator.canShare && navigator.canShare({ files: [pdfFile] })) {
               await navigator.share({
                   files: [pdfFile],
-                  title: `Health Report for ${patient.name}`,
-                  text: `Here is the SONRI Oralytic health report for ${patient.name}.`,
+                  title: `Health Report - ${patient.name}`,
+                  text: `Laporan skrining kesehatan terpadu SONRI Oralytic untuk ${patient.name}.`,
               });
           } else {
-              alert("Web Share not supported, downloading PDF instead.");
+              // Seamless fallback to direct download
               handleExport();
           }
       } catch (error) {
           if ((error as DOMException).name !== 'AbortError') {
                console.error("Failed to share PDF:", error);
-               alert("Could not share PDF. It will be downloaded instead.");
                handleExport();
           }
       }

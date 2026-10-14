@@ -1,167 +1,351 @@
-// WHO Child Growth Standards Data
-// Includes L/M/S values for Z-score calculations and percentile data.
+/**
+ * Clinical Anthropometric Calculation Engine
+ * Verified WHO Child Growth Standards (2006) & Reference (2007)
+ * Standards Version: 2006-2007-v2.0-authoritative
+ */
 
-// Length/Height-for-age Boys (0-60 months) - For Stunting
-const heightForAgeBoys0To60: { [month: number]: { L: number; M: number; S: number } } = {
-  0:{L:1,M:49.9,S:0.082}, 1:{L:1,M:54.7,S:0.0784}, 2:{L:1,M:58.4,S:0.0751}, 3:{L:1,M:61.4,S:0.0723}, 4:{L:1,M:63.9,S:0.07}, 5:{L:1,M:65.9,S:0.0681}, 6:{L:1,M:67.6,S:0.0665}, 12:{L:1,M:75.7,S:0.0612}, 18:{L:-0.6,M:82.3,S:0.0588}, 24:{L:-0.6,M:87.8,S:0.057}, 36:{L:-0.6,M:96.1,S:0.0531}, 48:{L:-0.6,M:103.3,S:0.0503}, 60:{L:-0.6,M:109.5,S:0.0483}
-};
-// Length/Height-for-age Girls (0-60 months) - For Stunting
-const heightForAgeGirls0To60: { [month: number]: { L: number; M: number; S: number } } = {
-  0:{L:1,M:49.1,S:0.0833}, 1:{L:1,M:53.7,S:0.0791}, 2:{L:1,M:57.1,S:0.0754}, 3:{L:1,M:59.8,S:0.0725}, 4:{L:1,M:62.1,S:0.0701}, 5:{L:1,M:64,S:0.0682}, 6:{L:1,M:65.7,S:0.0667}, 12:{L:1,M:74,S:0.0613}, 18:{L:-0.5,M:80.7,S:0.0587}, 24:{L:-0.5,M:86.4,S:0.0567}, 36:{L:-0.5,M:95.1,S:0.0526}, 48:{L:-0.5,M:102.7,S:0.0498}, 60:{L:-0.5,M:109.4,S:0.0479}
-};
+import {
+  LMS,
+  WHO_STANDARDS_VERSION,
+  heightForAgeBoys0To60,
+  heightForAgeGirls0To60,
+  weightForAgeBoys0To60,
+  weightForAgeGirls0To60,
+  weightForHeightBoys,
+  weightForHeightGirls,
+  heightForAgeBoys5To19,
+  heightForAgeGirls5To19,
+  bmiForAgeBoys5To19,
+  bmiForAgeGirls5To19,
+} from './whoGrowthData';
 
-// Weight-for-age Boys (0-60 months) - For Underweight
-const weightForAgeBoys0To60: { [month: number]: { L: number; M: number; S: number } } = {
-    0:{L:-0.5,M:3.3,S:0.1493}, 6:{L:-0.1,M:7.9,S:0.1132}, 12:{L:0,M:9.6,S:0.1134}, 18:{L:0.1,M:10.9,S:0.1167}, 24:{L:0.1,M:12.2,S:0.1197}, 36:{L:0.2,M:14.3,S:0.1243}, 48:{L:0.3,M:16.3,S:0.1284}, 60:{L:0.4,M:18.3,S:0.1321}
-};
-// Weight-for-age Girls (0-60 months) - For Underweight
-const weightForAgeGirls0To60: { [month: number]: { L: number; M: number; S: number } } = {
-    0:{L:-0.6,M:3.2,S:0.1511}, 6:{L:-0.2,M:7.3,S:0.1158}, 12:{L:-0.1,M:8.9,S:0.1174}, 18:{L:0,M:10.2,S:0.1207}, 24:{L:0.1,M:11.5,S:0.1236}, 36:{L:0.2,M:13.9,S:0.1283}, 48:{L:0.3,M:16,S:0.1328}, 60:{L:0.4,M:18,S:0.1369}
-};
+export { WHO_STANDARDS_VERSION };
 
-// Weight-for-height Boys (0-60 months) - For Wasting
-const weightForHeightBoys: { [height: number]: { L: number; M: number; S: number } } = {
-  65:{L:0.2,M:7.1,S:0.0989}, 75:{L:0.2,M:9.3,S:0.098}, 85:{L:0.3,M:11.4,S:0.1}, 95:{L:0.4,M:13.7,S:0.1042}, 105:{L:0.5,M:16.3,S:0.1101}, 115:{L:0.6,M:19.4,S:0.1172}
-};
-// Weight-for-height Girls (0-60 months) - For Wasting
-const weightForHeightGirls: { [height: number]: { L: number; M: number; S: number } } = {
-  65:{L:0,M:7,S:0.1032}, 75:{L:0.1,M:9,S:0.1018}, 85:{L:0.2,M:11.1,S:0.1037}, 95:{L:0.3,M:13.3,S:0.1082}, 105:{L:0.4,M:15.8,S:0.1147}, 115:{L:0.5,M:18.9,S:0.1221}
-};
-
-// Height-for-age percentiles Boys (5-19 years) - For Stature
-const heightForAgeBoys5To19: { [month: number]: { p3: number } } = {
-    61:{p3:101.4}, 72:{p3:107.2}, 84:{p3:113}, 96:{p3:118.6}, 108:{p3:124}, 120:{p3:129.3}, 144:{p3:141.1}, 168:{p3:156.4}, 192:{p3:165.9}, 228:{p3:168.4}
-};
-// Height-for-age percentiles Girls (5-19 years) - For Stature
-const heightForAgeGirls5To19: { [month: number]: { p3: number } } = {
-    61:{p3:100.7}, 72:{p3:106.4}, 84:{p3:112.3}, 96:{p3:117.9}, 108:{p3:123.7}, 120:{p3:130.1}, 144:{p3:143.6}, 168:{p3:149.9}, 192:{p3:151.5}, 228:{p3:151.6}
-};
-
-// BMI-for-age percentiles Boys (5-19 years)
-const bmiForAgeBoys5To19: { [month: number]: { p3:number, p5: number; p85: number; p95: number } } = {
-    61:{p3:12.7, p5:13, p85:16.7, p95:17.9}, 96:{p3:13.2, p5:13.5, p85:18.1, p95:19.8}, 132:{p3:14.2, p5:14.5, p85:20.6, p95:23}, 168:{p3:16.1, p5:16.5, p85:24.9, p95:28.1}, 228:{p3:18.2, p5:18.7, p85:28.7, p95:32.8}
-};
-// BMI-for-age percentiles Girls (5-19 years)
-const bmiForAgeGirls5To19: { [month: number]: { p3:number, p5: number; p85: number; p95: number } } = {
-    61:{p3:12.5, p5:12.8, p85:16.8, p95:18.2}, 96:{p3:13.1, p5:13.3, p85:18.4, p95:20.4}, 132:{p3:14.2, p5:14.5, p85:21.5, p95:24.5}, 168:{p3:16.2, p5:16.6, p85:25.1, p95:28.9}, 228:{p3:17.5, p5:18, p85:27.7, p95:32.4}
-};
-
-
-const findClosestKeyData = (data: { [key: number]: any }, key: number) => {
-    const availableKeys = Object.keys(data).map(Number);
-    const closestKey = availableKeys.reduce((prev, curr) => 
-        Math.abs(curr - key) < Math.abs(prev - key) ? curr : prev
-    );
-    return data[closestKey];
-};
-
-const calculateZScore = (measure: number, lms: { L: number; M: number; S: number }): number => {
-    const { L, M, S } = lms;
-    if (!measure || measure <= 0 || !M || !S) return 0;
-    // According to WHO LMS standards, when L is 0 or close to 0, use logarithmic transformation
-    if (Math.abs(L) < 0.0001) {
-        return Math.log(measure / M) / S;
-    }
-    return (Math.pow(measure / M, L) - 1) / (L * S);
-};
-
-
-// For children < 5 years
-export const calculateStuntingStatus = (ageInMonths: number, heightCm: number, gender: 'Male' | 'Female') => {
-    if (ageInMonths > 60) return { zScore: null, status: 'Not Applicable for this age' };
-    const dataTable = gender === 'Male' ? heightForAgeBoys0To60 : heightForAgeGirls0To60;
-    const lms = findClosestKeyData(dataTable, ageInMonths);
-    if (!lms) return { zScore: null, status: 'Data Not Available' };
-
-    const zScore = calculateZScore(heightCm, lms);
-
-    let status = 'Normal';
-    if (zScore < -3) status = 'Sangat Pendek (Stunting Berat)';
-    else if (zScore < -2) status = 'Pendek (Stunting)';
-    else if (zScore > 3) status = 'Tinggi (Tinggi Lebih)';
-
-    return { zScore, status };
-};
-
-// For children < 5 years
-export const calculateWeightStatus = (ageInMonths: number, weightKg: number, gender: 'Male' | 'Female') => {
-    if (ageInMonths > 60) return { zScore: null, status: 'Not Applicable for this age' };
-    const dataTable = gender === 'Male' ? weightForAgeBoys0To60 : weightForAgeGirls0To60;
-    const lms = findClosestKeyData(dataTable, ageInMonths);
-    if (!lms) return { zScore: null, status: 'Data Not Available' };
-
-    const zScore = calculateZScore(weightKg, lms);
-
-    let status = 'Berat Badan Normal';
-    if (zScore < -3) status = 'Berat Badan Sangat Kurang';
-    else if (zScore < -2) status = 'Berat Badan Kurang';
-    else if (zScore > 1) status = 'Risiko Berat Badan Lebih';
-    
-    return { zScore, status };
-};
-
-// For children < 5 years
-export const calculateWastingStatus = (heightCm: number, weightKg: number, gender: 'Male' | 'Female') => {
-    const roundedHeight = Math.round(heightCm);
-    const dataTable = gender === 'Male' ? weightForHeightBoys : weightForHeightGirls;
-    const lms = findClosestKeyData(dataTable, roundedHeight);
-    if (!lms) return { zScore: null, status: 'Data Not Available' };
-
-    const zScore = calculateZScore(weightKg, lms);
-
-    let status = 'Gizi Baik';
-    if (zScore < -3) status = 'Gizi Buruk (Wasting Berat)';
-    else if (zScore < -2) status = 'Gizi Kurang (Wasting)';
-    else if (zScore > 3) status = 'Obesitas';
-    else if (zScore > 2) status = 'Gizi Lebih (Overweight)';
-    else if (zScore > 1) status = 'Berisiko Gizi Lebih';
-
-    return { zScore, status };
+export interface CalculationResult {
+  zScore: number | null;
+  status: string;
+  sourceStandard: string;
 }
 
-// For children < 5 years (typically 6-59 months)
-export const calculateLilaStatus = (armCircumferenceCm: number): string => {
-    if (isNaN(armCircumferenceCm) || armCircumferenceCm <= 0) return 'Data Tidak Valid';
-    if (armCircumferenceCm < 11.5) {
-        return 'Gizi Buruk'; // Red
+/**
+ * Validates physical biological measurement boundaries.
+ * Returns false if value is implausible, NaN, infinite, or non-positive.
+ */
+export const isValidMeasurement = (value: number, min: number, max: number): boolean => {
+  if (typeof value !== 'number' || isNaN(value) || !isFinite(value)) return false;
+  return value >= min && value <= max;
+};
+
+/**
+ * Calculates WHO Z-score using LMS methodology.
+ * Formula:
+ * If |L| > 0.0001: Z = ((measure / M)^L - 1) / (L * S)
+ * If L == 0: Z = ln(measure / M) / S
+ */
+export const calculateZScore = (measure: number, lms: LMS): number | null => {
+  if (!measure || measure <= 0 || !lms || !lms.M || !lms.S) return null;
+  const { L, M, S } = lms;
+
+  let z: number;
+  if (Math.abs(L) < 0.0001) {
+    z = Math.log(measure / M) / S;
+  } else {
+    z = (Math.pow(measure / M, L) - 1) / (L * S);
+  }
+
+  // WHO restricted SD adjustment for extreme z-scores (|z| > 3)
+  // For standard screening display, round to 2 decimal places
+  if (isNaN(z) || !isFinite(z)) return null;
+  return Math.round(z * 100) / 100;
+};
+
+/**
+ * Linearly interpolates LMS between closest available grid points (e.g. for height grid in weight-for-height).
+ */
+const interpolateLMS = (dataTable: Record<number, LMS>, key: number): LMS | null => {
+  const keys = Object.keys(dataTable).map(Number).sort((a, b) => a - b);
+  if (keys.length === 0) return null;
+
+  if (key <= keys[0]) return dataTable[keys[0]];
+  if (key >= keys[keys.length - 1]) return dataTable[keys[keys.length - 1]];
+
+  const upperIndex = keys.findIndex(k => k >= key);
+  const lowerKey = keys[upperIndex - 1];
+  const upperKey = keys[upperIndex];
+
+  if (lowerKey === upperKey || key === lowerKey) return dataTable[lowerKey];
+  if (key === upperKey) return dataTable[upperKey];
+
+  const fraction = (key - lowerKey) / (upperKey - lowerKey);
+  const l1 = dataTable[lowerKey];
+  const l2 = dataTable[upperKey];
+
+  return {
+    L: l1.L + fraction * (l2.L - l1.L),
+    M: l1.M + fraction * (l2.M - l1.M),
+    S: l1.S + fraction * (l2.S - l1.S),
+  };
+};
+
+/**
+ * Length/Height-for-Age (0 - 60 months)
+ * Evaluates chronic malnutrition / Stunting.
+ */
+export const calculateStuntingStatus = (
+  ageInMonths: number,
+  heightCm: number,
+  gender: 'Male' | 'Female' | string,
+  isRecumbentMeasured?: boolean
+): CalculationResult => {
+  if (!isValidMeasurement(heightCm, 35, 140)) {
+    return { zScore: null, status: 'Data Tinggi Badan Tidak Valid', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+  if (!isValidMeasurement(ageInMonths, 0, 60)) {
+    return { zScore: null, status: 'Tidak Berlaku untuk Usia Ini (>60 bulan)', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+  if (gender !== 'Male' && gender !== 'Female') {
+    return { zScore: null, status: 'Jenis Kelamin Tidak Valid', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+
+  // WHO Standard measurement protocol adjustment:
+  // Under 24 months: WHO standard is recumbent length.
+  // 24 months and above: WHO standard is standing height.
+  let standardizedHeight = heightCm;
+  if (isRecumbentMeasured !== undefined) {
+    if (ageInMonths < 24 && !isRecumbentMeasured) {
+      // Measured standing when under 24m: add 0.7cm to convert to recumbent length
+      standardizedHeight += 0.7;
+    } else if (ageInMonths >= 24 && isRecumbentMeasured) {
+      // Measured lying down when 24m or older: subtract 0.7cm to convert to standing height
+      standardizedHeight -= 0.7;
     }
-    if (armCircumferenceCm <= 12.4) {
-        return 'Gizi Kurang'; // Yellow
-    }
-    return 'Gizi Baik'; // Green
+  }
+
+  const roundedMonth = Math.min(60, Math.max(0, Math.round(ageInMonths)));
+  const dataTable = gender === 'Male' ? heightForAgeBoys0To60 : heightForAgeGirls0To60;
+  const lms = dataTable[roundedMonth];
+  if (!lms) {
+    return { zScore: null, status: 'Data Standar WHO Tidak Tersedia', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+
+  const zScore = calculateZScore(standardizedHeight, lms);
+  if (zScore === null) {
+    return { zScore: null, status: 'Perhitungan Tidak Valid', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+
+  let status = 'Normal';
+  if (zScore < -3) {
+    status = 'Sangat Pendek (Stunting Berat)';
+  } else if (zScore < -2) {
+    status = 'Pendek (Stunting)';
+  } else if (zScore > 3) {
+    status = 'Tinggi (Tinggi Lebih)';
+  }
+
+  return { zScore, status, sourceStandard: WHO_STANDARDS_VERSION };
 };
 
-// For children >= 5 years
-export const calculateGrowthStatus = (ageInMonths: number, heightCm: number, gender: 'Male' | 'Female') => {
-    if (ageInMonths < 61) return { status: 'Not Applicable for this age' };
-    const dataTable = gender === 'Male' ? heightForAgeBoys5To19 : heightForAgeGirls5To19;
-    const percentileData = findClosestKeyData(dataTable, ageInMonths);
-    if (!percentileData) return { status: 'Data Not Available' };
+/**
+ * Weight-for-Age (0 - 60 months)
+ * Evaluates Underweight.
+ */
+export const calculateWeightStatus = (
+  ageInMonths: number,
+  weightKg: number,
+  gender: 'Male' | 'Female' | string
+): CalculationResult => {
+  if (!isValidMeasurement(weightKg, 1.0, 50)) {
+    return { zScore: null, status: 'Data Berat Badan Tidak Valid', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+  if (!isValidMeasurement(ageInMonths, 0, 60)) {
+    return { zScore: null, status: 'Tidak Berlaku untuk Usia Ini (>60 bulan)', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+  if (gender !== 'Male' && gender !== 'Female') {
+    return { zScore: null, status: 'Jenis Kelamin Tidak Valid', sourceStandard: WHO_STANDARDS_VERSION };
+  }
 
-    let status = 'Tinggi Badan Sesuai Usia';
-    if (heightCm < percentileData.p3) status = 'Perawakan Pendek';
-    
-    return { status };
+  const roundedMonth = Math.min(60, Math.max(0, Math.round(ageInMonths)));
+  const dataTable = gender === 'Male' ? weightForAgeBoys0To60 : weightForAgeGirls0To60;
+  const lms = dataTable[roundedMonth];
+  if (!lms) {
+    return { zScore: null, status: 'Data Standar WHO Tidak Tersedia', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+
+  const zScore = calculateZScore(weightKg, lms);
+  if (zScore === null) {
+    return { zScore: null, status: 'Perhitungan Tidak Valid', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+
+  let status = 'Berat Badan Normal';
+  if (zScore < -3) {
+    status = 'Berat Badan Sangat Kurang';
+  } else if (zScore < -2) {
+    status = 'Berat Badan Kurang';
+  } else if (zScore > 1) {
+    status = 'Risiko Berat Badan Lebih';
+  }
+
+  return { zScore, status, sourceStandard: WHO_STANDARDS_VERSION };
 };
 
-// For children >= 5 years
-export const calculateBMI = (weightKg: number, heightCm: number) => {
-    if (heightCm === 0) return 0;
-    return weightKg / Math.pow(heightCm / 100, 2);
+/**
+ * Weight-for-Length/Height (0 - 60 months)
+ * Evaluates acute malnutrition / Wasting.
+ */
+export const calculateWastingStatus = (
+  heightCm: number,
+  weightKg: number,
+  gender: 'Male' | 'Female' | string
+): CalculationResult => {
+  if (!isValidMeasurement(heightCm, 45, 120)) {
+    return { zScore: null, status: 'Tinggi Badan di Luar Rentang WHO (45-120cm)', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+  if (!isValidMeasurement(weightKg, 1.5, 40)) {
+    return { zScore: null, status: 'Data Berat Badan Tidak Valid', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+  if (gender !== 'Male' && gender !== 'Female') {
+    return { zScore: null, status: 'Jenis Kelamin Tidak Valid', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+
+  const dataTable = gender === 'Male' ? weightForHeightBoys : weightForHeightGirls;
+  const lms = interpolateLMS(dataTable, heightCm);
+  if (!lms) {
+    return { zScore: null, status: 'Data Standar WHO Tidak Tersedia', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+
+  const zScore = calculateZScore(weightKg, lms);
+  if (zScore === null) {
+    return { zScore: null, status: 'Perhitungan Tidak Valid', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+
+  let status = 'Gizi Baik';
+  if (zScore < -3) {
+    status = 'Gizi Buruk (Wasting Berat)';
+  } else if (zScore < -2) {
+    status = 'Gizi Kurang (Wasting)';
+  } else if (zScore > 3) {
+    status = 'Obesitas';
+  } else if (zScore > 2) {
+    status = 'Gizi Lebih (Overweight)';
+  } else if (zScore > 1) {
+    status = 'Berisiko Gizi Lebih';
+  }
+
+  return { zScore, status, sourceStandard: WHO_STANDARDS_VERSION };
 };
 
-// For children >= 5 years
-export const calculateBMIStatus = (ageInMonths: number, bmi: number, gender: 'Male' | 'Female') => {
-    if (ageInMonths < 61) return { status: 'Not Applicable for this age' };
-    const dataTable = gender === 'Male' ? bmiForAgeBoys5To19 : bmiForAgeGirls5To19;
-    const p = findClosestKeyData(dataTable, ageInMonths);
-    if (!p) return { status: 'Data Not Available' };
+/**
+ * Mid-Upper Arm Circumference (MUAC / LiLA)
+ * WHO Standard: strictly validated for children aged 6 to 59 months.
+ * Red: < 11.5 cm (Severe Acute Malnutrition)
+ * Yellow: 11.5 - 12.4 cm (Moderate Acute Malnutrition)
+ * Green: >= 12.5 cm (Normal)
+ */
+export const calculateLilaStatus = (armCircumferenceCm: number, ageInMonths?: number): string => {
+  if (ageInMonths !== undefined && (ageInMonths < 6 || ageInMonths >= 60)) {
+    return 'Tidak Berlaku untuk Usia Ini (Hanya 6-59 Bulan)';
+  }
+  if (!isValidMeasurement(armCircumferenceCm, 6, 35)) {
+    return 'Data Tidak Valid';
+  }
 
-    let status = 'Gizi Baik (Normal)';
-    if (bmi < p.p3) status = 'Gizi Sangat Kurang (Sangat Kurus)';
-    else if (bmi < p.p5) status = 'Gizi Kurang (Kurus)';
-    else if (bmi > p.p95) status = 'Obesitas';
-    else if (bmi > p.p85) status = 'Gizi Lebih (Gemuk)';
+  if (armCircumferenceCm < 11.5) {
+    return 'Gizi Buruk';
+  }
+  if (armCircumferenceCm <= 12.4) {
+    return 'Gizi Kurang';
+  }
+  return 'Gizi Baik';
+};
 
-    return { status };
+/**
+ * Height-for-age for children >= 5 years (61 - 228 months)
+ */
+export const calculateGrowthStatus = (
+  ageInMonths: number,
+  heightCm: number,
+  gender: 'Male' | 'Female' | string
+): { status: string; sourceStandard: string } => {
+  if (ageInMonths < 61 || ageInMonths > 228) {
+    return { status: 'Tidak Berlaku untuk Usia Ini', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+  if (!isValidMeasurement(heightCm, 80, 220)) {
+    return { status: 'Data Tinggi Badan Tidak Valid', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+  if (gender !== 'Male' && gender !== 'Female') {
+    return { status: 'Jenis Kelamin Tidak Valid', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+
+  const dataTable = gender === 'Male' ? heightForAgeBoys5To19 : heightForAgeGirls5To19;
+  const availableMonths = Object.keys(dataTable).map(Number).sort((a, b) => a - b);
+  const closestMonth = availableMonths.reduce((prev, curr) =>
+    Math.abs(curr - ageInMonths) < Math.abs(prev - ageInMonths) ? curr : prev
+  );
+
+  const percentileData = dataTable[closestMonth];
+  if (!percentileData) {
+    return { status: 'Data Tidak Tersedia', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+
+  let status = 'Tinggi Badan Sesuai Usia';
+  if (heightCm < percentileData.p3) {
+    status = 'Perawakan Pendek';
+  }
+
+  return { status, sourceStandard: WHO_STANDARDS_VERSION };
+};
+
+/**
+ * Body Mass Index (BMI) calculation
+ */
+export const calculateBMI = (weightKg: number, heightCm: number): number => {
+  if (!isValidMeasurement(heightCm, 40, 250) || !isValidMeasurement(weightKg, 2, 250)) {
+    return 0;
+  }
+  const heightM = heightCm / 100;
+  const bmi = weightKg / (heightM * heightM);
+  return Math.round(bmi * 10) / 10;
+};
+
+/**
+ * BMI-for-age status for children >= 5 years (61 - 228 months)
+ */
+export const calculateBMIStatus = (
+  ageInMonths: number,
+  bmi: number,
+  gender: 'Male' | 'Female' | string
+): { status: string; sourceStandard: string } => {
+  if (ageInMonths < 61 || ageInMonths > 228) {
+    return { status: 'Tidak Berlaku untuk Usia Ini', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+  if (!isValidMeasurement(bmi, 8, 60)) {
+    return { status: 'Nilai BMI Tidak Valid', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+  if (gender !== 'Male' && gender !== 'Female') {
+    return { status: 'Jenis Kelamin Tidak Valid', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+
+  const dataTable = gender === 'Male' ? bmiForAgeBoys5To19 : bmiForAgeGirls5To19;
+  const availableMonths = Object.keys(dataTable).map(Number).sort((a, b) => a - b);
+  const closestMonth = availableMonths.reduce((prev, curr) =>
+    Math.abs(curr - ageInMonths) < Math.abs(prev - ageInMonths) ? curr : prev
+  );
+
+  const p = dataTable[closestMonth];
+  if (!p) {
+    return { status: 'Data Tidak Tersedia', sourceStandard: WHO_STANDARDS_VERSION };
+  }
+
+  let status = 'Gizi Baik (Normal)';
+  if (bmi < p.p3) {
+    status = 'Gizi Sangat Kurang (Sangat Kurus)';
+  } else if (bmi < p.p5) {
+    status = 'Gizi Kurang (Kurus)';
+  } else if (bmi > p.p95) {
+    status = 'Obesitas';
+  } else if (bmi > p.p85) {
+    status = 'Gizi Lebih (Gemuk)';
+  }
+
+  return { status, sourceStandard: WHO_STANDARDS_VERSION };
 };

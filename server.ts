@@ -21,7 +21,14 @@ async function startServer() {
   } else {
     const distPath = path.resolve(__dirname, 'dist');
     app.use(express.static(distPath));
-    app.get('*', (_req, res) => {
+
+    // Ensure unmatched API routes return JSON 404 and are not captured by SPA fallback
+    app.use('/api', (_req, res) => {
+      res.status(404).json({ error: 'Endpoint API tidak ditemukan.' });
+    });
+
+    // Express 5 compatible SPA fallback
+    app.use((_req, res) => {
       res.sendFile(path.resolve(distPath, 'index.html'));
     });
   }

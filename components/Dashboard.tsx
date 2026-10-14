@@ -152,11 +152,67 @@ const Dashboard: React.FC<DashboardProps> = ({ onNewScreening, onViewRecord, onB
     }
 
     const escapeCsvField = (field: any): string => {
-        const stringField = String(field ?? '');
-        if (stringField.includes(',') || stringField.includes('"') || stringField.includes('\n')) {
+        let stringField = String(field ?? '');
+        // CSV Formula Injection mitigation:
+        // If cell starts with '=', '+', '-', '@', tab, or CR, prefix with apostrophe
+        if (/^[=+\-@\t\r]/.test(stringField)) {
+            stringField = `'${stringField}`;
+        }
+        if (stringField.includes(',') || stringField.includes('"') || stringField.includes('\n') || stringField.includes('\r')) {
             return `"${stringField.replace(/"/g, '""')}"`;
         }
         return stringField;
+    };
+
+    // RFC 4180 compliant CSV parser that correctly handles quoted commas and multiline line breaks
+    const parseRFC4180CSV = (text: string): string[][] => {
+        const rows: string[][] = [];
+        let currentRow: string[] = [];
+        let currentField = '';
+        let inQuotes = false;
+
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            const nextChar = text[i + 1];
+
+            if (inQuotes) {
+                if (char === '"' && nextChar === '"') {
+                    currentField += '"';
+                    i++;
+                } else if (char === '"') {
+                    inQuotes = false;
+                } else {
+                    currentField += char;
+                }
+            } else {
+                if (char === '"') {
+                    inQuotes = true;
+                } else if (char === ',') {
+                    currentRow.push(currentField);
+                    currentField = '';
+                } else if (char === '\r') {
+                    if (nextChar === '\n') i++;
+                    currentRow.push(currentField);
+                    rows.push(currentRow);
+                    currentRow = [];
+                    currentField = '';
+                } else if (char === '\n') {
+                    currentRow.push(currentField);
+                    rows.push(currentRow);
+                    currentRow = [];
+                    currentField = '';
+                } else {
+                    currentField += char;
+                }
+            }
+        }
+
+        if (currentField || currentRow.length > 0) {
+            currentRow.push(currentField);
+            rows.push(currentRow);
+        }
+
+        return rows.filter(r => r.length > 0 && r.some(cell => cell.trim().length > 0));
     };
 
     const getNestedValue = (obj: any, path: string): any => {
@@ -306,20 +362,18 @@ const Dashboard: React.FC<DashboardProps> = ({ onNewScreening, onViewRecord, onB
 
     const processCSV = async (csvText: string) => {
         try {
-            const lines = csvText.split(/\r\n|\n/);
-            if (lines.length < 2) return;
+            const parsedRows = parseRFC4180CSV(csvText);
+            if (parsedRows.length < 2) {
+                alert(t('importError'));
+                return;
+            }
 
-            const headerLine = lines[0];
-            const headers = headerLine.split(',').map(h => h.trim().replace(/^"|"$/g, ''));
-            
+            const headers = parsedRows[0].map(h => h.trim());
             const headerConfig = getHeaderConfig();
             
-            // Create a mapping from CSV Header Name -> Internal Key
-            // We try to match based on the translated label in the CSV
             const csvHeaderToKeyMap: Record<number, any> = {};
             
             headers.forEach((header, index) => {
-                // Find which config item matches this header (checking current language, id, en, or key)
                 const configItem = headerConfig.find(c => 
                     t(c.labelKey as any) === header ||
                     (translations.id as any)[c.labelKey] === header ||
@@ -331,73 +385,75 @@ const Dashboard: React.FC<DashboardProps> = ({ onNewScreening, onViewRecord, onB
                 }
             });
 
-            let importedCount = 0;
+            let skippedCount = 0;
             const newRecords: ScreeningRecord[] = [];
 
-            for (let i = 1; i < lines.length; i++) {
-                const line = lines[i];
-                if (!line.trim()) continue;
+            for (let i = 1; i < parsedRows.length; i++) {
+                const values = parsedRows[i];
+                if (!values || values.length === 0) continue;
 
-                // Simple regex to split by comma, respecting quotes
-                const matches = line.match(/(".*?"|[^",\s]+)(?=\s*,|\s*$)/g);
-                const values = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/); // Better split for CSV
+                const record: any = {
+                    patientData: {},
+                    stuntingData: { ...initialStuntingData },
+                    healthReport: {},
+                    oralAnalyses: []
+                };
 
-                if (values) {
-                    const record: any = {
-                        patientData: {},
-                        stuntingData: { ...initialStuntingData }, // Start with defaults
-                        healthReport: {},
-                        oralAnalyses: [] // Initialize empty, as we don't fully import images/details from CSV
-                    };
+                let hasData = false;
 
-                    let hasData = false;
-
-                    values.forEach((val, index) => {
-                        const config = csvHeaderToKeyMap[index];
-                        if (config) {
-                            let cleanValue = val.trim().replace(/^"|"$/g, '').replace(/""/g, '"');
-                            
-                            // Handle Arrays
-                            let finalValue: any = cleanValue;
-                            if (config.isArray) {
-                                finalValue = cleanValue ? cleanValue.split(';').map((s: string) => s.trim()) : [];
-                            }
-
-                            // Only cast healthReport numerical metrics to numbers; patientData fields remain strings
-                            if (config.key.startsWith('healthReport.') && ['bmi', 'heightForAgeZScore', 'weightForAgeZScore', 'wastingZScore'].some(k => config.key.includes(k))) {
-                                const num = parseFloat(cleanValue);
-                                if (!isNaN(num)) finalValue = num;
-                            }
-
-                            setNestedValue(record, config.key, finalValue);
-                            hasData = true;
+                values.forEach((val, index) => {
+                    const config = csvHeaderToKeyMap[index];
+                    if (config) {
+                        let cleanValue = val.trim();
+                        // Unescape CSV formula injection prefix if present
+                        if (/^'[=+\-@\t\r]/.test(cleanValue)) {
+                            cleanValue = cleanValue.substring(1);
                         }
-                    });
 
-                    if (hasData) {
-                        // Ensure ID exists
-                        if (!record.id) {
-                            record.id = `IMPORTED-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+                        // Handle Arrays
+                        let finalValue: any = cleanValue;
+                        if (config.isArray) {
+                            finalValue = cleanValue ? cleanValue.split(';').map((s: string) => s.trim()) : [];
                         }
-                         // Ensure arrays are initialized if missing
-                        if (!record.healthReport.recommendations) record.healthReport.recommendations = [];
 
-                        newRecords.push(record as ScreeningRecord);
+                        if (config.key.startsWith('healthReport.') && ['bmi', 'heightForAgeZScore', 'weightForAgeZScore', 'wastingZScore'].some(k => config.key.includes(k))) {
+                            const num = parseFloat(cleanValue);
+                            if (!isNaN(num)) finalValue = num;
+                        }
+
+                        setNestedValue(record, config.key, finalValue);
+                        hasData = true;
                     }
+                });
+
+                // Validation: Record MUST have at least patient name and NIK
+                if (hasData && record.patientData?.name && record.patientData?.nik) {
+                    if (!record.id) {
+                        record.id = `IMPORTED-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+                    }
+                    if (!record.healthReport.recommendations) record.healthReport.recommendations = [];
+                    if (!record.date) record.date = new Date().toISOString();
+
+                    newRecords.push(record as ScreeningRecord);
+                } else if (hasData) {
+                    skippedCount++;
                 }
             }
 
             if (newRecords.length > 0) {
-                // Save sequentially to ensure storage updates
                 for (const record of newRecords) {
                     await saveScreeningRecord(record);
                 }
-                // Refresh local state
                 const updatedRecords = await getScreeningRecords();
                 setRecords(updatedRecords);
-                alert(t('importSuccess', { count: newRecords.length }));
+                
+                const skippedMsg = skippedCount > 0 ? ` (${skippedCount} baris tidak lengkap dilewati)` : '';
+                alert(`Berhasil mengimpor ${newRecords.length} data pasien.${skippedMsg}`);
             } else {
-                alert(t('importError'));
+                alert(skippedCount > 0 
+                    ? `Gagal mengimpor: ${skippedCount} baris tidak memenuhi syarat kelengkapan data (Nama dan NIK wajib ada).`
+                    : t('importError')
+                );
             }
 
         } catch (error) {

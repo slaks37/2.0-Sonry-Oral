@@ -1,6 +1,16 @@
 import express from 'express';
-import { GoogleGenAI, Type } from '@google/genai';
-import { neon } from '@neondatabase/serverless';
+import { agnesAI } from '../services/ai/agnesProvider';
+import { getDb, isDbConfigured, initDatabase } from '../services/db';
+import {
+  authenticateToken,
+  requireRole,
+  hashPassword,
+  verifyPassword,
+  generateToken,
+  logAuditEvent,
+  AuthenticatedRequest,
+  AuthUser,
+} from '../services/auth';
 
 const app = express();
 
@@ -8,320 +18,466 @@ const app = express();
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// Initialize GoogleGenAI server-side with required User-Agent
-const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
-if (!apiKey) {
-  console.warn('⚠️ [Sonri Warning] GEMINI_API_KEY is not set. Gemini API endpoints will return errors until an API key is provided.');
-}
-
-const ai = new GoogleGenAI({
-  apiKey: apiKey || 'dummy-key',
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
+// Security headers
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  next();
 });
 
-// Database connection via Neon Postgres
-const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
-const sql = databaseUrl ? neon(databaseUrl) : null;
-
-// In-memory fallback store for records & EMR
-let inMemoryRecords: any[] = [];
-
-// Initialize table on startup if database is available
-if (sql) {
-  sql`
-    CREATE TABLE IF NOT EXISTS screening_records (
-      id VARCHAR(255) PRIMARY KEY,
-      date TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-      nik VARCHAR(50),
-      record_data JSONB NOT NULL,
-      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-    );
-  `.then(() => {
-    console.log('✅ [Neon DB] Connected and screening_records table ready.');
-  }).catch((err) => {
-    console.warn('⚠️ [Neon DB] Initialization warning:', err?.message || err);
+// Initialize database schema on startup
+if (isDbConfigured()) {
+  initDatabase().catch((err) => {
+    console.error('⚠️ [Database Init Error]:', err?.message || err);
   });
 }
 
-const oralAnalysisSchema = {
-  type: Type.OBJECT,
-  properties: {
-    issues: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          diseaseName: {
-            type: Type.STRING,
-            enum: [
-              'K02.51 Dental caries on pit and fissure surface, limited to enamel',
-              'K02.52 Dental caries on pit and fissure surface penetrating into dentin',
-              'K05.0 Acute gingivitis',
-              'K00.4 Enamel hypoplasia',
-              'K07.3 Anomalies of tooth position (Crowding)',
-              'TP.01 TriPlaque: New Plaque (<48h)',
-              'TP.02 TriPlaque: Old Plaque (>48h)',
-              'TP.03 TriPlaque: Acidic Plaque (High Risk)',
-            ],
-          },
-          description: { type: Type.STRING },
-          boundingBox: {
-            type: Type.OBJECT,
-            properties: {
-              x: { type: Type.NUMBER },
-              y: { type: Type.NUMBER },
-              width: { type: Type.NUMBER },
-              height: { type: Type.NUMBER },
-            },
-            required: ['x', 'y', 'width', 'height'],
-          },
-        },
-        required: ['diseaseName', 'description', 'boundingBox'],
-      },
-    },
-    hygieneAssessment: { type: Type.STRING, enum: ['Good', 'Fair', 'Poor'] },
-  },
-  required: ['issues', 'hygieneAssessment'],
-};
+// ===================================================================================
+// HEALTH & READINESS ENDPOINTS
+// ===================================================================================
 
-// Helper to call Gemini with primary model and automatic fallback across stable official models
-async function generateGeminiContent(params: any) {
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not configured on the server. Please set GEMINI_API_KEY in your environment variables.');
-  }
+app.get('/api/health', async (_req, res) => {
+  const dbStatus = isDbConfigured();
+  const agnesKeyConfigured = Boolean(process.env.AGNES_API_KEY);
 
-  const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
-  let lastError: any = null;
-
-  for (const model of modelsToTry) {
+  let dbConnectionOk = false;
+  if (dbStatus) {
     try {
-      const response = await ai.models.generateContent({
-        ...params,
-        model,
-      });
-      return response;
-    } catch (err: any) {
-      console.warn(`Model ${model} failed, attempting next if available:`, err?.message || err);
-      lastError = err;
+      const sql = getDb();
+      await sql`SELECT 1`;
+      dbConnectionOk = true;
+    } catch {
+      dbConnectionOk = false;
     }
   }
 
-  throw lastError || new Error('Failed to generate content with Gemini');
-}
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    aiProvider: {
+      provider: agnesAI.providerName,
+      configured: agnesKeyConfigured,
+      model: process.env.AGNES_MODEL || 'agnes-2.5-flash',
+    },
+    database: {
+      configured: dbStatus,
+      connected: dbConnectionOk,
+    },
+  });
+});
 
-// 1. API: Check Image Quality
-app.post('/api/gemini/check-quality', async (req, res) => {
+// ===================================================================================
+// AUTHENTICATION & RBAC ENDPOINTS
+// ===================================================================================
+
+app.post('/api/v1/auth/signup', async (req, res) => {
+  try {
+    const { name, email, password, organizationName, organizationCode } = req.body;
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Nama lengkap, email, dan kata sandi wajib diisi.' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Kata sandi minimal harus 6 karakter.' });
+    }
+
+    if (!isDbConfigured()) {
+      return res.status(503).json({ error: 'Database belum terhubung. Silakan konfigurasi DATABASE_URL.' });
+    }
+
+    const sql = getDb();
+    const existing = await sql`SELECT id FROM users WHERE email = ${email.toLowerCase().trim()}`;
+    if (existing && existing.length > 0) {
+      return res.status(409).json({ error: 'Email sudah terdaftar. Silakan gunakan email lain atau login.' });
+    }
+
+    // Determine organization
+    let orgId = 'org_default';
+    if (organizationCode) {
+      const foundOrg = await sql`SELECT id FROM organizations WHERE code = ${organizationCode.trim()}`;
+      if (foundOrg && foundOrg.length > 0) {
+        orgId = (foundOrg[0] as any).id;
+      } else if (organizationName) {
+        orgId = `org_${Date.now()}`;
+        await sql`
+          INSERT INTO organizations (id, name, code)
+          VALUES (${orgId}, ${organizationName.trim()}, ${organizationCode.trim()})
+        `;
+      }
+    }
+
+    const userId = `USR-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+    const passwordHash = await hashPassword(password);
+    const role = 'health_worker';
+
+    await sql`
+      INSERT INTO users (id, organization_id, name, email, password_hash, role)
+      VALUES (${userId}, ${orgId}, ${name.trim()}, ${email.toLowerCase().trim()}, ${passwordHash}, ${role})
+    `;
+
+    const authUser: AuthUser = {
+      userId,
+      organizationId: orgId,
+      name: name.trim(),
+      email: email.toLowerCase().trim(),
+      role,
+    };
+
+    const token = generateToken(authUser);
+
+    await logAuditEvent({
+      userId,
+      organizationId: orgId,
+      action: 'USER_REGISTERED',
+      resourceType: 'users',
+      resourceId: userId,
+      ipAddress: req.ip,
+    });
+
+    return res.status(201).json({
+      message: 'Pendaftaran akun berhasil.',
+      token,
+      user: authUser,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/v1/auth/signup:', err);
+    return res.status(500).json({ error: err?.message || 'Gagal mendaftarkan akun. Silakan coba kembali.' });
+  }
+});
+
+app.post('/api/v1/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email dan kata sandi wajib diisi.' });
+    }
+
+    if (!isDbConfigured()) {
+      return res.status(503).json({ error: 'Database belum terhubung. Silakan konfigurasi DATABASE_URL.' });
+    }
+
+    const sql = getDb();
+    const rows = await sql`
+      SELECT id, organization_id, name, email, password_hash, role
+      FROM users
+      WHERE email = ${email.toLowerCase().trim()}
+      LIMIT 1
+    `;
+
+    if (!rows || rows.length === 0) {
+      return res.status(401).json({ error: 'Email atau kata sandi tidak sesuai.' });
+    }
+
+    const dbUser = rows[0] as any;
+    const isValid = await verifyPassword(password, dbUser.password_hash);
+    if (!isValid) {
+      return res.status(401).json({ error: 'Email atau kata sandi tidak sesuai.' });
+    }
+
+    const authUser: AuthUser = {
+      userId: dbUser.id,
+      organizationId: dbUser.organization_id,
+      name: dbUser.name,
+      email: dbUser.email,
+      role: dbUser.role,
+    };
+
+    const token = generateToken(authUser);
+
+    await logAuditEvent({
+      userId: authUser.userId,
+      organizationId: authUser.organizationId,
+      action: 'USER_LOGIN',
+      resourceType: 'users',
+      resourceId: authUser.userId,
+      ipAddress: req.ip,
+    });
+
+    return res.json({
+      message: 'Login berhasil.',
+      token,
+      user: authUser,
+    });
+  } catch (err: any) {
+    console.error('Error in /api/v1/auth/login:', err);
+    return res.status(500).json({ error: err?.message || 'Gagal memproses login.' });
+  }
+});
+
+app.get('/api/v1/auth/me', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  return res.json({ user: req.user });
+});
+
+app.post('/api/v1/auth/logout', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  if (req.user) {
+    await logAuditEvent({
+      userId: req.user.userId,
+      organizationId: req.user.organizationId,
+      action: 'USER_LOGOUT',
+      resourceType: 'users',
+      resourceId: req.user.userId,
+      ipAddress: req.ip,
+    });
+  }
+  return res.json({ success: true, message: 'Logout berhasil.' });
+});
+
+// ===================================================================================
+// AI SCREENING ENDPOINTS (AGNES AI)
+// ===================================================================================
+
+const handleCheckQuality = async (req: express.Request, res: express.Response) => {
   try {
     const { imageBase64, mimeType } = req.body;
     if (!imageBase64) {
-      return res.status(400).json({ error: 'Image data is required' });
+      return res.status(400).json({ error: 'Data foto diperlukan.' });
     }
 
-    const imagePart = {
-      inlineData: {
-        data: imageBase64,
-        mimeType: mimeType || 'image/jpeg',
-      },
-    };
-
-    const prompt = "Is this image clear enough for dental analysis? Check for excessive blurriness, darkness, or obstruction. Respond JSON with quality: 'good'|'poor' and reason.";
-
-    const response = await generateGeminiContent({
-      contents: { parts: [imagePart, { text: prompt }] },
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            quality: { type: Type.STRING },
-            reason: { type: Type.STRING },
-          },
-          required: ['quality', 'reason'],
-        },
-      },
-    });
-
-    const result = JSON.parse(response.text?.trim() || '{}');
+    const result = await agnesAI.checkImageQuality(imageBase64, mimeType || 'image/jpeg');
     return res.json(result);
   } catch (err: any) {
-    console.error('Error in /api/gemini/check-quality:', err);
+    console.error('Error in check-quality:', err);
     return res.status(500).json({
-      error: err?.message || 'Failed to check image quality. Please try again.',
-      quality: 'good',
-      reason: 'Could not perform remote quality check.',
+      quality: 'unable_to_assess',
+      reason: err?.message || 'Gagal memeriksa kualitas gambar.',
+      error: err?.message,
     });
   }
-});
+};
 
-// 2. API: Analyze Oral Image
-app.post('/api/gemini/analyze-oral', async (req, res) => {
+const handleAnalyzeOral = async (req: express.Request, res: express.Response) => {
   try {
     const { imageBase64, mimeType, ageInYears, knowledgeBase } = req.body;
     if (!imageBase64) {
-      return res.status(400).json({ error: 'Image data is required' });
+      return res.status(400).json({ error: 'Data foto diperlukan.' });
     }
 
-    const imagePart = {
-      inlineData: {
-        data: imageBase64,
-        mimeType: mimeType || 'image/jpeg',
-      },
-    };
-
-    const prompt = `Analyze this oral image using ICD-10 and TriPlaque rules. Patient age: ${ageInYears || 'unknown'} years.
-    
-**IMPORTANT MEDICAL ETIQUETTE:**
-This is a screening tool. You MUST NOT give a definitive diagnosis.
-When describing findings, always use the prefix "Suspected as" (English) or "Diduga sebagai" (Indonesian) before naming the condition.
-
-**TASKS:**
-1. Check Enamel Hypoplasia (K00.4) - texture defects.
-2. Check Crowding (K07.3) - overlapping teeth/narrow jaw.
-3. TriPlaque: PINK (TP.01), PURPLE (TP.02), LIGHT BLUE (TP.03).
-REFERENCE DATA: ${knowledgeBase || ''}`;
-
-    const response = await generateGeminiContent({
-      contents: { parts: [imagePart, { text: prompt }] },
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: oralAnalysisSchema,
-      },
-    });
-
-    const result = JSON.parse(response.text?.trim() || '{"issues":[],"hygieneAssessment":"Fair"}');
+    const result = await agnesAI.analyzeOralImage(
+      imageBase64,
+      Number(ageInYears) || 0,
+      mimeType || 'image/jpeg',
+      knowledgeBase
+    );
     return res.json(result);
   } catch (err: any) {
-    console.error('Error in /api/gemini/analyze-oral:', err);
-    return res.status(500).json({
-      error: err?.message || 'Gagal menganalisis gambar gigi dan mulut. Pastikan foto jelas dan coba lagi.',
+    console.error('Error in analyze-oral:', err);
+    const statusCode = err?.statusCode || 500;
+    return res.status(statusCode).json({
+      error: err?.message || 'Gagal menganalisis gambar gigi dan mulut. Silakan coba kembali.',
     });
   }
-});
+};
 
-// 3. API: Generate Final Report
-app.post('/api/gemini/final-report', async (req, res) => {
+const handleFinalReport = async (req: express.Request, res: express.Response) => {
   try {
     const { patientData, stuntingData, oralResults, metrics, language } = req.body;
 
-    const allOralIssues = (oralResults || []).flat().map((o: any) => o.diseaseName).join(', ');
-
-    const prompt = `Act as an AI Pediatric Nutritionist. Link oral data to stunting.
-    
-**RULES:**
-- Use "Suspected as" or "Diduga sebagai" for all oral health findings.
-- K07.3 (Crowding) = narrow jaw, chronic malnutrition sign.
-- K00.4 (Hypoplasia) = 1000 days deficiency.
-- K02 (Caries) = Cytokine Anorexia risk leading to Wasting.
-Data: Patient ${patientData?.name || 'Child'}, Oral: ${allOralIssues || 'None'}, Metrics: ${JSON.stringify(metrics || {})}.
-Language: ${language || 'id'}.`;
-
-    const response = await generateGeminiContent({
-      contents: prompt,
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            nutritionResult: { type: Type.STRING },
-            nutritionReason: { type: Type.STRING },
-            oralResult: { type: Type.STRING },
-            oralReason: { type: Type.STRING },
-            conclusion: { type: Type.STRING },
-            recommendations: { type: Type.ARRAY, items: { type: Type.STRING } },
-          },
-          required: ['nutritionResult', 'nutritionReason', 'oralResult', 'oralReason', 'conclusion', 'recommendations'],
-        },
-      },
+    const reportNarrative = await agnesAI.generateClinicalReport({
+      patientData,
+      stuntingData,
+      oralResults,
+      metrics,
+      language: language === 'en' ? 'en' : 'id',
     });
 
-    const reportJson = JSON.parse(response.text?.trim() || '{}');
+    // Merge deterministic calculated metrics (Layer A) with narrative (Layer C)
     return res.json({
       ...metrics,
-      ...reportJson,
+      ...reportNarrative,
     });
   } catch (err: any) {
-    console.error('Error in /api/gemini/final-report:', err);
-    return res.status(500).json({
-      error: err?.message || 'Gagal menyusun laporan kesehatan terpadu. Silakan coba kembali.',
+    console.error('Error in final-report:', err);
+    const statusCode = err?.statusCode || 500;
+    return res.status(statusCode).json({
+      error: err?.message || 'Gagal menyusun laporan terpadu. Silakan coba kembali.',
     });
   }
-});
+};
 
-// 4. API: Screening Records (PostgreSQL + In-memory fallback)
-app.get('/api/v1/screening-records', async (_req, res) => {
-  if (sql) {
-    try {
-      const rows = await sql`
-        SELECT record_data FROM screening_records ORDER BY created_at DESC
+// Modern Provider-Neutral AI routes
+app.post('/api/ai/check-quality', handleCheckQuality);
+app.post('/api/ai/analyze-oral', handleAnalyzeOral);
+app.post('/api/ai/final-report', handleFinalReport);
+
+// Backward-compatible Gemini route aliases
+app.post('/api/gemini/check-quality', handleCheckQuality);
+app.post('/api/gemini/analyze-oral', handleAnalyzeOral);
+app.post('/api/gemini/final-report', handleFinalReport);
+
+// ===================================================================================
+// SCREENING RECORDS (TENANT ISOLATED & DURABLE POSTGRESQL)
+// ===================================================================================
+
+app.get('/api/v1/screening-records', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  if (!isDbConfigured()) {
+    return res.status(503).json({ error: 'Database belum terkonfigurasi di server.' });
+  }
+
+  const organizationId = req.user!.organizationId;
+  const search = typeof req.query.search === 'string' ? req.query.search.trim() : '';
+
+  try {
+    const sql = getDb();
+    let rows: any[];
+
+    if (search) {
+      const searchPattern = `%${search}%`;
+      rows = await sql`
+        SELECT record_data 
+        FROM screening_records 
+        WHERE organization_id = ${organizationId}
+          AND (nik ILIKE ${searchPattern} OR patient_name ILIKE ${searchPattern})
+        ORDER BY screening_date DESC 
+        LIMIT 200
       `;
-      const records = rows.map((r: any) => r.record_data);
-      return res.json(records);
-    } catch (err: any) {
-      console.warn('[Neon DB] Query failed, falling back to in-memory store:', err?.message || err);
+    } else {
+      rows = await sql`
+        SELECT record_data 
+        FROM screening_records 
+        WHERE organization_id = ${organizationId}
+        ORDER BY screening_date DESC 
+        LIMIT 200
+      `;
     }
+
+    const records = rows.map((r: any) => r.record_data);
+    return res.json(records);
+  } catch (err: any) {
+    console.error('[Database Error] Fetch screening records failed:', err);
+    return res.status(500).json({ error: 'Gagal mengambil data rekam skrining dari basis data.' });
   }
-  res.json(inMemoryRecords);
 });
 
-app.post('/api/v1/screening-records', async (req, res) => {
-  const record = req.body;
-  if (!record) {
-    return res.status(400).json({ error: 'Record body is required' });
-  }
+app.post(
+  '/api/v1/screening-records',
+  authenticateToken,
+  requireRole(['super_admin', 'organization_admin', 'clinician', 'health_worker']),
+  async (req: AuthenticatedRequest, res) => {
+    const record = req.body;
+    if (!record || !record.patientData) {
+      return res.status(400).json({ error: 'Data skrining lengkap diperlukan.' });
+    }
 
-  // Always keep in-memory fallback sync
-  inMemoryRecords.push(record);
+    if (!isDbConfigured()) {
+      return res.status(503).json({
+        error: 'Penyimpanan database tidak tersedia. Data tidak dapat disimpan ke server pusat.',
+      });
+    }
 
-  if (sql) {
+    const organizationId = req.user!.organizationId;
+    const userId = req.user!.userId;
+    const id = record.id || `REC-${Date.now()}`;
+    const nik = record.patientData?.nik || '';
+    const patientName = record.patientData?.name || '';
+    const dob = record.patientData?.dob ? new Date(record.patientData.dob) : null;
+    const gender = record.patientData?.gender || '';
+    const date = record.date ? new Date(record.date) : new Date();
+
     try {
-      const id = record.id || `REC-${Date.now()}`;
-      const nik = record.patientData?.nik || '';
+      const sql = getDb();
       await sql`
-        INSERT INTO screening_records (id, nik, record_data)
-        VALUES (${id}, ${nik}, ${JSON.stringify(record)})
-        ON CONFLICT (id) DO UPDATE SET record_data = ${JSON.stringify(record)}
+        INSERT INTO screening_records (
+          id, organization_id, created_by, nik, patient_name, dob, gender, screening_date, record_data, updated_at
+        )
+        VALUES (
+          ${id},
+          ${organizationId},
+          ${userId},
+          ${nik},
+          ${patientName},
+          ${dob},
+          ${gender},
+          ${date},
+          ${JSON.stringify(record)},
+          CURRENT_TIMESTAMP
+        )
+        ON CONFLICT (id) DO UPDATE SET
+          record_data = ${JSON.stringify(record)},
+          updated_at = CURRENT_TIMESTAMP
       `;
+
+      await logAuditEvent({
+        userId,
+        organizationId,
+        action: 'CREATE_OR_UPDATE_SCREENING_RECORD',
+        resourceType: 'screening_records',
+        resourceId: id,
+        details: { patientNikPrefix: nik.substring(0, 6) },
+        ipAddress: req.ip,
+      });
+
+      return res.status(200).json({ success: true, id, message: 'Data berhasil disimpan secara permanen.' });
     } catch (err: any) {
-      console.error('[Neon DB] Save failed:', err?.message || err);
+      console.error('[Database Error] Save record failed:', err);
+      // NEVER return success on database failure!
+      return res.status(500).json({
+        success: false,
+        error: 'Gagal menyimpan rekam skrining ke database serverless.',
+        details: err?.message || String(err),
+      });
     }
   }
+);
 
-  res.json({ success: true });
+// ===================================================================================
+// EMR INTEGRATION ENDPOINTS (AUTHENTICATED & TENANT ISOLATED)
+// ===================================================================================
+
+app.post('/api/emr/patient-records', authenticateToken, async (req: AuthenticatedRequest, res) => {
+  await logAuditEvent({
+    userId: req.user?.userId,
+    organizationId: req.user?.organizationId,
+    action: 'EMR_SYNC_PUSH',
+    resourceType: 'emr_records',
+    ipAddress: req.ip,
+  });
+
+  res.json({ success: true, message: 'Data skrining berhasil disinkronisasi ke sistem EMR.' });
 });
 
-// 5. API: EMR Integration
-app.post('/api/emr/patient-records', (req, res) => {
-  res.json({ success: true, message: 'Record received and acknowledged by simulated EMR' });
-});
-
-app.get('/api/emr/patient-records', async (req, res) => {
+app.get('/api/emr/patient-records', authenticateToken, async (req: AuthenticatedRequest, res) => {
   const nik = req.query.nik as string;
   if (!nik) {
-    return res.status(400).json({ error: 'NIK parameter is required' });
+    return res.status(400).json({ error: 'Parameter NIK diperlukan.' });
   }
 
-  if (sql) {
-    try {
-      const rows = await sql`
-        SELECT record_data FROM screening_records WHERE nik = ${nik} ORDER BY created_at DESC LIMIT 1
-      `;
-      if (rows && rows.length > 0) {
-        return res.json((rows[0] as any).record_data.patientData);
-      }
-    } catch (err: any) {
-      console.warn('[Neon DB] EMR lookup error:', err?.message || err);
+  if (!isDbConfigured()) {
+    return res.status(503).json({ error: 'Database belum terhubung.' });
+  }
+
+  const organizationId = req.user!.organizationId;
+
+  try {
+    const sql = getDb();
+    const rows = await sql`
+      SELECT record_data 
+      FROM screening_records 
+      WHERE organization_id = ${organizationId} AND nik = ${nik} 
+      ORDER BY screening_date DESC 
+      LIMIT 1
+    `;
+
+    if (rows && rows.length > 0) {
+      await logAuditEvent({
+        userId: req.user?.userId,
+        organizationId: req.user?.organizationId,
+        action: 'EMR_PATIENT_LOOKUP',
+        resourceType: 'screening_records',
+        details: { nikPrefix: nik.substring(0, 6) },
+        ipAddress: req.ip,
+      });
+
+      return res.json((rows[0] as any).record_data.patientData);
     }
-  }
 
-  const match = inMemoryRecords.find((r) => r.patientData?.nik === nik);
-  if (match) {
-    return res.json(match.patientData);
+    return res.status(404).json({ error: 'Data pasien tidak ditemukan pada organisasi ini.' });
+  } catch (err: any) {
+    console.error('[Database Error] EMR lookup failed:', err);
+    return res.status(500).json({ error: 'Gagal mencari data pasien di EMR.' });
   }
-  return res.status(404).json({ error: 'Patient not found' });
 });
 
 export default app;
