@@ -2,6 +2,10 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenAI, Type } from '@google/genai';
+import { neon } from '@neondatabase/serverless';
+
+const databaseUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL || '';
+const sql = databaseUrl ? neon(databaseUrl) : null;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -232,17 +236,64 @@ Language: ${language || 'id'}.`;
   }
 });
 
-// In-memory demo store for records & EMR
+// In-memory fallback store for records & EMR
 let inMemoryRecords: any[] = [];
 
-app.get('/api/v1/screening-records', (_req, res) => {
+// Initialize table on startup if database is available
+if (sql) {
+  sql`
+    CREATE TABLE IF NOT EXISTS screening_records (
+      id VARCHAR(255) PRIMARY KEY,
+      date TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+      nik VARCHAR(50),
+      record_data JSONB NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+    );
+  `.then(() => {
+    console.log('✅ [Neon DB] Connected and screening_records table ready.');
+  }).catch((err) => {
+    console.warn('⚠️ [Neon DB] Initialization warning:', err?.message || err);
+  });
+}
+
+app.get('/api/v1/screening-records', async (_req, res) => {
+  if (sql) {
+    try {
+      const rows = await sql`
+        SELECT record_data FROM screening_records ORDER BY created_at DESC
+      `;
+      const records = rows.map((r: any) => r.record_data);
+      return res.json(records);
+    } catch (err: any) {
+      console.warn('[Neon DB] Query failed, falling back to in-memory store:', err?.message || err);
+    }
+  }
   res.json(inMemoryRecords);
 });
 
-app.post('/api/v1/screening-records', (req, res) => {
-  if (req.body) {
-    inMemoryRecords.push(req.body);
+app.post('/api/v1/screening-records', async (req, res) => {
+  const record = req.body;
+  if (!record) {
+    return res.status(400).json({ error: 'Record body is required' });
   }
+
+  // Always keep in-memory fallback sync
+  inMemoryRecords.push(record);
+
+  if (sql) {
+    try {
+      const id = record.id || `REC-${Date.now()}`;
+      const nik = record.patientData?.nik || '';
+      await sql`
+        INSERT INTO screening_records (id, nik, record_data)
+        VALUES (${id}, ${nik}, ${JSON.stringify(record)})
+        ON CONFLICT (id) DO UPDATE SET record_data = ${JSON.stringify(record)}
+      `;
+    } catch (err: any) {
+      console.error('[Neon DB] Save failed:', err?.message || err);
+    }
+  }
+
   res.json({ success: true });
 });
 
@@ -250,8 +301,25 @@ app.post('/api/emr/patient-records', (req, res) => {
   res.json({ success: true, message: 'Record received and acknowledged by simulated EMR' });
 });
 
-app.get('/api/emr/patient-records', (req, res) => {
+app.get('/api/emr/patient-records', async (req, res) => {
   const nik = req.query.nik as string;
+  if (!nik) {
+    return res.status(400).json({ error: 'NIK parameter is required' });
+  }
+
+  if (sql) {
+    try {
+      const rows = await sql`
+        SELECT record_data FROM screening_records WHERE nik = ${nik} ORDER BY created_at DESC LIMIT 1
+      `;
+      if (rows && rows.length > 0) {
+        return res.json((rows[0] as any).record_data.patientData);
+      }
+    } catch (err: any) {
+      console.warn('[Neon DB] EMR lookup error:', err?.message || err);
+    }
+  }
+
   const match = inMemoryRecords.find((r) => r.patientData?.nik === nik);
   if (match) {
     return res.json(match.patientData);
@@ -283,7 +351,12 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start server:', err);
-  process.exit(1);
-});
+// Only listen directly when not running in Vercel Serverless environment
+if (!process.env.VERCEL) {
+  startServer().catch((err) => {
+    console.error('Failed to start server:', err);
+    process.exit(1);
+  });
+}
+
+export default app;
