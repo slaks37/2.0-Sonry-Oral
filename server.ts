@@ -15,8 +15,12 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // Initialize GoogleGenAI server-side with required User-Agent
 const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
+if (!apiKey) {
+  console.warn('⚠️ [Sonri Warning] GEMINI_API_KEY is not set. Gemini API endpoints will return errors until an API key is provided.');
+}
+
 const ai = new GoogleGenAI({
-  apiKey,
+  apiKey: apiKey || 'dummy-key',
   httpOptions: {
     headers: {
       'User-Agent': 'aistudio-build',
@@ -65,9 +69,13 @@ const oralAnalysisSchema = {
   required: ['issues', 'hygieneAssessment'],
 };
 
-// Helper to call Gemini with primary model and automatic fallback
+// Helper to call Gemini with primary model and automatic fallback across stable official models
 async function generateGeminiContent(params: any) {
-  const modelsToTry = ['gemini-2.5-flash', 'gemini-3.8-flash', 'gemini-flash-latest'];
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY is not configured on the server. Please set GEMINI_API_KEY in your environment variables.');
+  }
+
+  const modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
   let lastError: any = null;
 
   for (const model of modelsToTry) {

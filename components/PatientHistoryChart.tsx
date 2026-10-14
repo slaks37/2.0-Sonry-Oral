@@ -6,8 +6,10 @@ import { useLanguage } from '../contexts/LanguageContext';
 const PatientHistoryChart: React.FC<{ patientRecords: ScreeningRecord[] }> = ({ patientRecords }) => {
     const { t } = useLanguage();
     const records = useMemo(() => 
-        patientRecords.filter(r => r.healthReport.heightForAgeZScore !== null)
-            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
+        patientRecords.filter(r => 
+            typeof r.healthReport?.heightForAgeZScore === 'number' && 
+            !isNaN(r.healthReport.heightForAgeZScore)
+        ).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
         [patientRecords]
     );
 

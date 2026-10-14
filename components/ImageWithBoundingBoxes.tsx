@@ -48,15 +48,17 @@ const ImageWithBoundingBoxes: React.FC<ImageWithBoundingBoxesProps> = ({
     let offsetY = 0;
 
     if (imgAspectRatio > containerAspectRatio) {
-      // Image is wider than container, height will be constrained by container height
+      // Image is wider than container: width is constrained by container width
+      renderedWidth = containerWidth;
+      renderedHeight = containerWidth / imgAspectRatio;
+      offsetX = 0;
+      offsetY = (containerHeight - renderedHeight) / 2;
+    } else {
+      // Image is taller than container: height is constrained by container height
       renderedHeight = containerHeight;
       renderedWidth = containerHeight * imgAspectRatio;
       offsetX = (containerWidth - renderedWidth) / 2;
-    } else {
-      // Image is taller than container, width will be constrained by container width
-      renderedWidth = containerWidth;
-      renderedHeight = containerWidth / imgAspectRatio;
-      offsetY = (containerHeight - renderedHeight) / 2;
+      offsetY = 0;
     }
     
     // Ensure rendered dimensions are positive

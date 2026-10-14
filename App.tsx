@@ -158,7 +158,23 @@ const App: React.FC = () => {
 
   const handleProceedToOralExam = () => {
     setError(null);
-    if (!patientData.nik || !patientData.name || !patientData.dob || !patientData.gender || !patientData.weight || !patientData.height || !patientData.headCircumference || !patientData.armCircumference) {
+    const { totalMonths } = calculateAge(patientData.dob);
+    const isOver5Years = totalMonths > 60;
+
+    const baseFieldsValid = Boolean(
+      patientData.nik &&
+      patientData.name &&
+      patientData.dob &&
+      patientData.gender &&
+      patientData.weight &&
+      patientData.height
+    );
+
+    const circumferenceValid = isOver5Years || Boolean(
+      patientData.headCircumference && patientData.armCircumference
+    );
+
+    if (!baseFieldsValid || !circumferenceValid) {
         setError(t('fillAllFieldsError'));
         return;
     }
@@ -267,6 +283,12 @@ const App: React.FC = () => {
         metrics.bmi = bmi;
         metrics.bmiStatus = bmiStatus.status;
         metrics.lilaStatus = 'Not Applicable for this Age';
+        metrics.stuntingStatus = 'Not Applicable for this age';
+        metrics.heightForAgeZScore = null;
+        metrics.weightStatus = 'Not Applicable for this age';
+        metrics.weightForAgeZScore = null;
+        metrics.wastingStatus = 'Not Applicable for this age';
+        metrics.wastingZScore = null;
       }
 
       const analysisPromises = oralAnalyses.map(analysis => 

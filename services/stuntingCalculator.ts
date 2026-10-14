@@ -57,6 +57,11 @@ const findClosestKeyData = (data: { [key: number]: any }, key: number) => {
 
 const calculateZScore = (measure: number, lms: { L: number; M: number; S: number }): number => {
     const { L, M, S } = lms;
+    if (!measure || measure <= 0 || !M || !S) return 0;
+    // According to WHO LMS standards, when L is 0 or close to 0, use logarithmic transformation
+    if (Math.abs(L) < 0.0001) {
+        return Math.log(measure / M) / S;
+    }
     return (Math.pow(measure / M, L) - 1) / (L * S);
 };
 
@@ -73,6 +78,7 @@ export const calculateStuntingStatus = (ageInMonths: number, heightCm: number, g
     let status = 'Normal';
     if (zScore < -3) status = 'Sangat Pendek (Stunting Berat)';
     else if (zScore < -2) status = 'Pendek (Stunting)';
+    else if (zScore > 3) status = 'Tinggi (Tinggi Lebih)';
 
     return { zScore, status };
 };
@@ -89,6 +95,7 @@ export const calculateWeightStatus = (ageInMonths: number, weightKg: number, gen
     let status = 'Berat Badan Normal';
     if (zScore < -3) status = 'Berat Badan Sangat Kurang';
     else if (zScore < -2) status = 'Berat Badan Kurang';
+    else if (zScore > 1) status = 'Risiko Berat Badan Lebih';
     
     return { zScore, status };
 };
@@ -105,6 +112,9 @@ export const calculateWastingStatus = (heightCm: number, weightKg: number, gende
     let status = 'Gizi Baik';
     if (zScore < -3) status = 'Gizi Buruk (Wasting Berat)';
     else if (zScore < -2) status = 'Gizi Kurang (Wasting)';
+    else if (zScore > 3) status = 'Obesitas';
+    else if (zScore > 2) status = 'Gizi Lebih (Overweight)';
+    else if (zScore > 1) status = 'Berisiko Gizi Lebih';
 
     return { zScore, status };
 }

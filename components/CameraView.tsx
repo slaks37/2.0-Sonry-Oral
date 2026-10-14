@@ -122,11 +122,14 @@ const CameraView: React.FC<CameraViewProps> = ({ onConfirm, onClose }) => {
     }
   }, [zoomLevel, stream, zoomCapabilities]);
 
+  const previewsRef = useRef<string[]>([]);
+  previewsRef.current = capturedImagePreviews;
+
   useEffect(() => {
     return () => {
-        capturedImagePreviews.forEach(url => URL.revokeObjectURL(url));
+      previewsRef.current.forEach(url => URL.revokeObjectURL(url));
     };
-  }, [capturedImagePreviews]);
+  }, []);
 
   const handleSwitchCamera = useCallback(() => {
     if (availableDevices.length < 2) return;

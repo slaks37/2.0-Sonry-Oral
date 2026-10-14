@@ -5,6 +5,7 @@ import { useLanguage } from '../contexts/LanguageContext';
 import PatientHistoryChart from './PatientHistoryChart';
 import { getScreeningRecords, saveScreeningRecord } from '../services/apiService';
 import { initialStuntingData } from '../App';
+import { translations } from '../translations';
 
 interface DashboardProps {
     onNewScreening: () => void;
@@ -318,8 +319,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onNewScreening, onViewRecord, onB
             const csvHeaderToKeyMap: Record<number, any> = {};
             
             headers.forEach((header, index) => {
-                // Find which config item matches this header (checking current language)
-                const configItem = headerConfig.find(c => t(c.labelKey as any) === header);
+                // Find which config item matches this header (checking current language, id, en, or key)
+                const configItem = headerConfig.find(c => 
+                    t(c.labelKey as any) === header ||
+                    (translations.id as any)[c.labelKey] === header ||
+                    (translations.en as any)[c.labelKey] === header ||
+                    c.key === header
+                );
                 if (configItem) {
                     csvHeaderToKeyMap[index] = configItem;
                 }
@@ -357,8 +363,8 @@ const Dashboard: React.FC<DashboardProps> = ({ onNewScreening, onViewRecord, onB
                                 finalValue = cleanValue ? cleanValue.split(';').map((s: string) => s.trim()) : [];
                             }
 
-                            // Handle numeric fields (simple check)
-                            if (['weight', 'height', 'headCircumference', 'armCircumference', 'bmi', 'heightForAgeZScore', 'weightForAgeZScore', 'wastingZScore'].some(k => config.key.includes(k))) {
+                            // Only cast healthReport numerical metrics to numbers; patientData fields remain strings
+                            if (config.key.startsWith('healthReport.') && ['bmi', 'heightForAgeZScore', 'weightForAgeZScore', 'wastingZScore'].some(k => config.key.includes(k))) {
                                 const num = parseFloat(cleanValue);
                                 if (!isNaN(num)) finalValue = num;
                             }
