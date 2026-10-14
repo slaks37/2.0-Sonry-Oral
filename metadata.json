@@ -1,0 +1,10 @@
+{
+  "name": "Remix Sonri Oralytic AI Detector",
+  "description": "An AI-powered application to detect early signs of stunting risk through oral health analysis. Designed for health workers, it provides rapid, visual feedback on a child\u0027s dental health to enable early intervention.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
